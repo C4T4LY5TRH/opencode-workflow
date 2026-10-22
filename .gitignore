@@ -1,0 +1,6 @@
+mini-projects/*
+!mini-projects/_template/
+.DS_Store
+*.log
+.DS_Store
+.playwright-mcp/

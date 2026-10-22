@@ -1,0 +1,80 @@
+# Brain evals - structural + behavioural checks.
+# Each eval: id, what it checks, how to check, pass condition.
+# bench.sh runs structural checks. Behavioural evals are run by hand with a real task.
+evals:
+  - id: core-rules-present
+    desc: Core rule file exists and is loaded as instruction
+    check: file ~/.config/opencode/brain/rules/000-core.md exists
+    pass: exists and non-empty
+  - id: rules-numbered
+    desc: All rule files numbered with unique ids
+    check: ls ~/.config/opencode/brain/rules/NNN-*.md
+    pass: no duplicate NNN prefix
+  - id: rules-small
+    desc: No rule file longer than 40 lines (brain stays cheap)
+    check: wc -l on each rule file
+    pass: every file <= 40 lines
+  - id: rules-linked
+    desc: Every rule id referenced in brain skill index exists
+    check: compare index list vs files
+    pass: no missing ids
+  - id: agents-present
+    desc: All 11 custom agents exist
+    check: ls ~/.config/opencode/agents/
+    pass: orchestrator scoper architect researcher visual-review coder reviewer critic devil whatif brain
+  - id: commands-present
+    desc: All 17 commands exist
+    check: ls ~/.config/opencode/commands/
+    pass: count == 17
+  - id: skills-present
+    desc: All 6 skills exist with valid frontmatter
+    check: ls ~/.config/opencode/skills/
+    pass: caveman browser visual-review html2md brain verify all have SKILL.md
+  - id: gates-intact
+    desc: Global permission still blocks destructive shell and env reads
+    check: grep opencode.json for deny rules
+    pass: contains rm -rf deny, git push --force deny, *.env deny
+  - id: changelog-current
+    desc: Brain changelog has version and date
+    check: head of CHANGELOG.md
+    pass: matches '## v' pattern
+  - id: spec-skill
+    desc: spec skill installed (spec-quality writing)
+    check: ls ~/.config/opencode/skills/spec/SKILL.md
+    pass: exists
+  - id: prompts-present
+    desc: brain prompt fragments exist (output contract + gate contract)
+    check: ls ~/.config/opencode/brain/prompts/
+    pass: at least 2 fragments
+  - id: prompts-linked
+    desc: every prompt fragment is referenced by an agent
+    check: grep agent files for fragment name
+    pass: no unreferenced fragment
+  - id: agents-report-contract
+    desc: all 11 agents report using the shared output contract
+    check: grep agents/ for 010-output-contract
+    pass: all agents reference it
+  - id: template-materialised
+    desc: mini-project template holds the real scaffold files
+    check: ls mini-projects/_template/
+    pass: AGENTS BRIEF SCOPE PLAN REVIEW BLIND NOTES LEARNINGS present
+  - id: workshop-rules
+    desc: workshop root AGENTS.md exists
+    check: test -f AGENTS.md
+    pass: exists
+  - id: config-hygiene
+    desc: no scattered .bak files in the opencode config dir
+    check: ls ~/.config/opencode/*.bak-*
+    pass: none
+  - id: behavioural-scope
+    desc: "BEHAVIOURAL - agent writes SCOPE.md with OUT list non-empty"
+    check: manual - give agent an idea, ask for scope
+    pass: SCOPE.md exists and OUT section not empty
+  - id: behavioural-blind
+    desc: "BEHAVIOURAL - critic refuses to skip BLIND.md sections"
+    check: manual - run /blind on a small project
+    pass: all 7 sections present
+  - id: behavioural-ship-gate
+    desc: "BEHAVIOURAL - /ship refuses without REVIEW.md + BLIND.md"
+    check: manual - try /ship on fresh project
+    pass: ship blocked with named gate
