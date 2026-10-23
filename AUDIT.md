@@ -18,7 +18,7 @@ The architecture you asked for — one brain, many projects, planning≠building
 - The plan gate and ship gate are **no-ops in every new project**, because the scaffold ships the files the gates look for.
 - A worker with `webfetch` denied **exfiltrated to the network anyway**, via Code Mode `fetch()` (probe 07, returned `200`).
 - A long tool output was **silently cut in half before the model read it** (probe 01 / 03: a 40-step file became 20 steps).
-- The permission config + 104 saved "always-allow" approvals resolve `rm -rf ~`, `git -C . reset --hard` and arbitrary `bash -c`/`python3`/`zsh` to **allow** for the coding agents. **Proven live:** `zsh -c '…'` ran with no prompt at the workshop root (probe 13c).
+- The permission config + 105 saved "always-allow" approvals (104 shell + 1 webfetch) resolve `rm -rf ~`, `git -C . reset --hard` and arbitrary `bash -c`/`python3`/`zsh` to **allow** for the coding agents. **Proven live:** `zsh -c '…'` ran with no prompt at the workshop root (probe 13c).
 - `install.sh` — the command the docs tell you to run after every change — **deletes runtime state and any file you added by hand**, and it is the reason `SESSIONS.log` and the brain heartbeat vanish.
 
 None of this is a design flaw. It is the predictable result of writing gates as prompt text and thin regexes on top of a permission model whose exact rules (last-match-wins, `**` is not special, saved approvals, Code Mode) were not yet known when the harness was built. Now they are known (`docs/audit/research/L0-config.md`, `docs/audit/research/L0-plugins.md`), and the fixes are concrete.
@@ -43,7 +43,7 @@ None of this is a design flaw. It is the predictable result of writing gates as 
 | L0 | OpenCode v2.1.3 source ground truth (plugin API, permission eval, config discovery) | `docs/audit/research/L0-plugins.md`, `docs/audit/research/L0-config.md` |
 | L1 | Brief & docs vs reality | §7 drift table |
 | L2 | Gate plugins run in Node against 127 table-driven cases; fixes retested the same way | `docs/audit/evidence/l2/` |
-| L3 | Effective per-agent permission matrix from OpenCode's *resolved* rules + the 104 saved DB approvals | `docs/audit/evidence/permission-matrix.txt` |
+| L3 | Effective per-agent permission matrix from OpenCode's *resolved* rules + the 105 saved DB approvals | `docs/audit/evidence/permission-matrix.txt` |
 | L4 | command→agent→permission→file workflow trace + reference-design comparison | `docs/audit/research/L4-references.md` |
 | L5 | `install.sh`/`new-project.sh`/`bench.py`/`teleport.sh` run against throwaway dirs | ledger |
 | L6 | the learning loop, end to end | §6 |
@@ -90,7 +90,7 @@ Every agent has Code Mode `execute` enabled (nobody denies `execute`), and Code 
 **Fix:** (1) deny `execute` for all agents (`policies` + per-agent) → turns Code Mode off, which also forces MCP tools to be **direct, hooked and permissioned**; (2) set `mcp.playwright.codemode: false`; (3) deny `playwright_browser_run_code_unsafe`, `playwright_browser_file_upload`, `playwright_browser_install` in `policies`; (4) run Playwright `--isolated` and pin its version. **Test:** live re-run of probe 07 must fail with permission denied.
 
 #### P0-6 — Permission order + saved approvals resolve destructive commands to **allow** **[LIVE+TEST]**
-OpenCode uses **last-match-wins** (`docs/audit/research/L0-config.md` §1). In `opencode.json` the specific denies (`rm -rf /`, `rm -rf ~`, …) are listed **before** the broad `"rm -rf *": "ask"`, so the broad `ask` wins and shadows them. Agent-level `"*"` rules shadow all global rules. Then 104 **saved "always-allow" approvals** in the DB (`rm *`, `bash *`, `zsh *`, `python3 *`, `curl *`, `git -C *`, `webfetch *`, …) turn every `ask` into `allow`.
+OpenCode uses **last-match-wins** (`docs/audit/research/L0-config.md` §1). In `opencode.json` the specific denies (`rm -rf /`, `rm -rf ~`, …) are listed **before** the broad `"rm -rf *": "ask"`, so the broad `ask` wins and shadows them. Agent-level `"*"` rules shadow all global rules. Then 105 **saved "always-allow" approvals** in the DB (`rm *`, `bash *`, `zsh *`, `python3 *`, `curl *`, `git -C *`, `webfetch *`, …) turn every `ask` into `allow`.
 **Proven:** the effective matrix (`docs/audit/evidence/permission-matrix.txt`) shows `rm -rf ~`, `git -C . reset --hard`, `bash -c 'rm -rf ~'` = **allow** for `coder`/`build`. Live: `zsh -c '…'` executed with no prompt at the workshop root but was rejected inside a fresh project (probe 13c vs 13b) — proving the saved approvals are doing it. L8 confirms what passes **both** the config layer and the plugin regex today: `git -C . reset --hard`, `git -C . push --force`, `rm -rf $HOME`, `rm --recursive --force /`, `find / -delete`.
 **Impact:** the "dangerous command block … no way through" claim is false. The coding agents can hard-reset, force-push via `-C`, and delete your home dir.
 **Fix:** (1) **clear the dangerous saved approvals** (`scripts/approvals.sh` wrapping `opencode api permission.saved.list/remove`); (2) reorder rules generic-first, specific-deny-last; (3) move hard stops into **`policies`** (deny beats agent rules *and* saved approvals, `docs/audit/research/L0-config.md` §1, verified against source); (4) deny the `-C`/long-flag/`$HOME` variants. **Test:** matrix re-run shows all destructive rows = deny for every agent; `gate-test` D-group 38/38.
@@ -218,6 +218,63 @@ Done on `harness-v2`, each phase committed separately, `gate-test` + a live re-p
 - **Phase 6 — docs + teleport redo + final verification:** rewrite docs to match; rebuild `teleport` from tracked files only, verified by a real round-trip into a sandbox; full live end-to-end project; `/doctor`-style check.
 
 Each fix carries its test (named inline above). The plan is written so your own harness, once Phase 2 lands, can drive the later phases through `/plan`→`/build`.
+
+---
+
+## 8a. Implementation status (2026-10-23, branch `harness-v2`)
+
+| Finding | Status | Verified by |
+|---|---|---|
+| P0-1 chained-commit bypass | **Fixed** — commit/tag/merge/cherry-pick/revert matched anywhere in a chain; `bash -c`/`sh -c`/`eval` denied by policy | `gate-test` s1–s7; policy matrix |
+| P0-2 scaffold ships gate files | **Fixed** — template has no gate files; bench `template-clean` | live scaffold of `v2sandbox`; bench |
+| P0-3 install.sh data loss | **Fixed by removal** — project-local install, no sync step; global copy archived | bench `no-global-harness`; workshop-only agent check |
+| P0-4 quiet-output truncation | **Fixed** — plugin deleted | live: 160-line file read in full |
+| P0-5 Code Mode exfil + unsafe browser tool | **Fixed** — `permission.execute: deny` (a policy deny alone did NOT hide the tool — caught live), unsafe Playwright tools denied, `codemode:false`, `--isolated`, pinned | live re-run: `execute` absent from coder's toolset; bench `code-mode-off` |
+| P0-6 rule order + saved approvals | **Fixed** — 105 saved approvals removed via API (backed up); rules reordered; hard stops in `policies` | `docs/audit/evidence/permission-matrix-after.txt`: every destructive row = deny for every agent |
+| P1-1 `/map` dead | **Fixed** | live: orchestrator → explore returned the tree |
+| P1-2 broken models | **Fixed** — all 11 on models that answered a live ping (reviewer/critic/whatif were dead) | bench `models-resolve`; live reviewer + critic ALIVE |
+| P1-3 verdict not checked | **Fixed** — ship gate requires `VERDICT: SHIP` | `gate-test` s9 |
+| P1-4 brain-log dead | **Fixed** — rebuilt on the AsyncIterable event API; **v2.2:** rule-usage telemetry (L6) added, `scripts/rule-report.py` + `/evolve` show DECAY, every rule maps to an eval | plugin loads (heartbeat); events land in `.harness/events.jsonl`; `gate-test` t1–t3, d1–d2; bench `rules-have-evals`; live: a rule read landed in `rule-usage.json` |
+| P1-5 `/html2md` `/evolve` `/learn` dead | **Fixed** — html2md via researcher; learn/evolve write proposals, human applies | command bodies + agent permissions |
+| P1-6 ownership incoherence | **Fixed** — root + `**/` patterns; plan gate keyed on target project | permission matrix (architect-only PLAN.md, root and nested); `gate-test` p1–p4 |
+| P1-7 global install | **Fixed** | outside-dir run is plain opencode; workshop has 16 agents |
+| P1-8 core rules not loaded | **Fixed** — absolute `instructions` path + rules in `AGENTS.md` | config parse shows the absolute path |
+| P1-9 no persisted handoff | **Fixed (v2.2)** — DEVIL.md/WHATIF.md persisted, /plan reads them; human-typed `/approve` records the PLAN.md hash in the project's `.harness/state.json`, the plan gate checks it, agents cannot write it | `gate-test` a1–a8, h1–h3; live: unapproved write refused, `/approve` via the command endpoint, approved write ok, PLAN.md edit revoked it, forged state refused |
+| P2-1 argument injection | **Fixed** in `new-project.sh` (goal handled as data) | hostile-goal test: nothing executed |
+| P2-3 snapshot flag / unpinned | **Fixed** — `--wait-for` waits for a selector; versions pinned | code |
+| P2-4 brain self-modification | **Fixed** — brain writes `brain/proposals/` only; top-level edit deny | permission matrix |
+| P2-5 regex gaps + false positives | **Fixed** — destructive moved to policies; plugin false positives gone | `gate-test` n1–n3 |
+| P2-6 secret exfil via shell | **Fixed (v2.2)** — curl uploads denied by policy; every agent shell runs in a macOS sandbox (no `.env`/key/credential-store reads, writes only in the project, never `.harness/` or `.git/hooks|config`, secret env vars removed); `python3`/`node` now allow for the coder. Shell only: grep/glob tools and the Playwright MCP server are not covered | `gate-test` x1–x13 (real `sandbox-exec`; a disabled sandbox fails 9 of them); live: `cat .env` and an out-of-project `python3` write refused, in-project `node` write ok, token scrubbed, `/new` with a hostile goal stored it as text |
+| P2-7 bench blind spots | **Fixed** — gates-fire, models-resolve, history + regression diff | bench 22/22 |
+| P2-8 PROOF contract | **Fixed** — builders PROOF, analysts BASIS | agent files |
+| P2-9 reviewer can't verify | **Fixed** — test runners allowed for reviewer | permission matrix (`npm test` = allow) |
+| P2-10 dead tools config | **Fixed** | config parse |
+
+**End-to-end proof (live, 2026-10-23):** a fresh project went scope → plan → build → review through
+the real harness on free models: `SCOPE.md` → `PLAN.md` (1 step) → `src/hello.js` (plan gate passed
+only because PLAN.md existed) → `node src/hello.js Ada` printed `hello Ada` → `REVIEW.md` with
+`VERDICT: SHIP`. The first attempt failed in an instructive way: the architect *reported* writing
+PLAN.md without ever calling the write tool ("fabricated completion"). Fixed with a write-before-report
+rule in every agent and a file-exists handoff check in every producing command; recorded as
+`brain/anti-patterns/fabricated-completion.md`.
+
+**After the audit (same day):** the review kit (3 agents, 2 commands, 2 skills) was installed and hardened (`brain/CHANGELOG.md` v2.1).
+Two findings came out of it that the audit missed: "read-only" allow-list entries can write or execute (`git diff --output=FILE`,
+`rg --pre CMD`; now denied in `policies`, which also closes it for the original agents), and opencode also reads your Claude Code
+skills (now switched off; the settings live outside the repo, see `TELEPORT.md`). Also fixed: the bench could be satisfied by the
+gate test faking the plugin heartbeat, and the teleport procedure was never tested until the round trip above. The bench is now
+24 checks; the gate test 25 cases. All test sessions and sandboxes created during the audit were deleted afterwards.
+
+**Backlog closed (v2.2, 2026-10-24):** the follow-ups this audit left open are done, each with tests and a live run
+through opencode 2.1.3 (`HANDBOOK.md` §14, `brain/CHANGELOG.md` v2.2): recorded plan approval via a human-typed
+`/approve` (P1-9); an OS sandbox for every agent shell, with `python3`/`node` now allowed for the coder (P2-6); rule-usage
+telemetry plus an eval per rule (L6); the `/hunt` referee now also requires the skeptic's severity to be unchanged; `/hunt`
+writes `BUGHUNT.md`. Bench 26 checks; gate test 56 cases.
+
+**Still open:**
+1. Merge `harness-v2` into `main`, after you have run real projects through it and are happy with it.
+2. Known limits, by design (`HANDBOOK.md` §4): the sandbox covers shell only (grep/glob tools and the Playwright MCP server
+   are outside it), it is macOS-only, and network stays open.
 
 ---
 

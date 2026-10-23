@@ -1,0 +1,26 @@
+#!/bin/bash
+# Agent shell wrapper (macOS). The safety-gate plugin points opencode's shell at this file
+# (shell "create.before" hook), so opencode runs:  agent-shell -c "<command>".
+#
+# - Agent shells (opencode sets AGENT=1 on every shell-tool call) run inside agent.sb:
+#   writes only in the project (HARNESS_SANDBOX_ROOT), temp dirs and tool caches; never
+#   .harness/ or .git hooks/config; no reads of .env files, keys or credential stores.
+#   Secret-looking environment variables are removed first.
+# - Your own `!cmd` in the TUI has no AGENT=1 and runs in your normal shell, unchanged.
+# - Fails closed: if the agent shell cannot be sandboxed, the command does not run.
+real="${HARNESS_REAL_SHELL:-/bin/zsh}"
+if [ "${AGENT:-}" != "1" ]; then exec "$real" "$@"; fi
+
+root="${HARNESS_SANDBOX_ROOT:-}"
+if [ -z "$root" ] || [ ! -d "$root" ] || [ ! -x /usr/bin/sandbox-exec ]; then
+  echo "HARNESS SANDBOX: cannot sandbox this agent shell (root '$root', /usr/bin/sandbox-exec needed). Refused." >&2
+  exit 126
+fi
+
+for v in $(compgen -e); do
+  case "$v" in
+    *KEY*|*TOKEN*|*SECRET*|*PASSWORD*|*PASSWD*|*CREDENTIAL*|SSH_AUTH_SOCK) unset "$v" ;;
+  esac
+done
+
+exec /usr/bin/sandbox-exec -f "$(dirname "${BASH_SOURCE[0]}")/agent.sb" -D ROOT="$root" -D HOME="$HOME" "$real" "$@"

@@ -1,0 +1,137 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "orchestrator",
+  "model": "opencode/big-pickle",
+  "instructions": ["~/Projects/opencode/brain/rules/000-core.md"],
+  "compaction": { "auto": true, "buffer": 10000 },
+  "experimental": { "subagent_depth": 1 },
+  "mcp": {
+    "servers": {
+      "playwright": {
+        "type": "local",
+        "command": ["npx", "-y", "@playwright/mcp@0.0.83", "--isolated", "--image-responses", "allow"],
+        "disabled": false,
+        "codemode": false,
+        "timeout": { "startup": 20000, "catalog": 20000, "execution": 20000 }
+      }
+    }
+  },
+  "policies": [
+    { "action": "tool.use", "resource": "execute:*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:sh -c *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:bash -c *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:zsh -c *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*/sh -c *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*/bash -c *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*/zsh -c *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:eval *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*rm -rf /*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*rm -fr /*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*rm -rf ~*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*rm -fr ~*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*rm -r*f*$HOME*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*rm *--recursive*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*--no-preserve-root*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git * reset --hard*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git reset --hard*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git * push *--force*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git push *--force*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git push *-f*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git * clean *-*f*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git clean *-*f*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git checkout -- *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git checkout .*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git restore *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git config --global*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*find */ -delete*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*sudo *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*mkfs*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*dd *of=/dev/*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*chmod *777*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*curl *|*sh*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*wget *|*sh*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*curl *--data*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*curl *-d *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*curl *-F *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*curl *-T *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*curl *--upload*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*git *--output*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*rg *--pre*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*launchctl *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*osascript*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*crontab *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*opencode api*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*opencode auth*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*opencode service*", "effect": "deny" },
+    { "action": "tool.use", "resource": "edit:*.harness/*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:*approve.sh*", "effect": "deny" },
+    { "action": "tool.use", "resource": "playwright_browser_run_code_unsafe:*", "effect": "deny" },
+    { "action": "tool.use", "resource": "playwright_browser_install:*", "effect": "deny" }
+  ],
+  "agent": {
+    "build": { "disable": true },
+    "general": { "disable": true },
+    "explore": {
+      "permission": {
+        "edit": "deny",
+        "shell": { "*": "deny", "ls*": "allow", "cat *": "allow", "head *": "allow", "rg *": "allow", "grep *": "allow", "find *": "allow", "git log*": "allow", "git status*": "allow" },
+        "webfetch": "deny",
+        "external_directory": { "*": "deny" }
+      }
+    },
+    "plan": {
+      "permission": { "edit": "deny", "shell": { "*": "deny", "ls*": "allow", "cat *": "allow", "rg *": "allow", "git log*": "allow", "git status*": "allow", "git diff*": "allow" } }
+    }
+  },
+  "permission": {
+    "execute": "deny",
+    "playwright_*": "deny",
+    "shell": {
+      "*": "ask",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "ls*": "allow",
+      "cat *": "allow",
+      "head *": "allow",
+      "tail *": "allow",
+      "wc *": "allow",
+      "rg *": "allow",
+      "grep *": "allow",
+      "find *": "allow",
+      "pwd": "allow",
+      "echo *": "allow",
+      "test *": "allow",
+      "which *": "allow",
+      "stat *": "allow",
+      "file *": "allow",
+      "du *": "allow",
+      "diff *": "allow",
+      "date": "allow",
+      "env": "allow"
+    },
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "**/.env": "deny",
+      "**/.env.*": "deny",
+      "**/.ssh/**": "deny",
+      "**/*.pem": "deny",
+      "**/id_rsa*": "deny"
+    },
+    "edit": {
+      "*": "deny",
+      ".git/**": "deny",
+      "**/.git/**": "deny",
+      ".env": "deny",
+      "*.env": "deny",
+      "**/*.env": "deny",
+      "**/*.env.*": "deny"
+    },
+    "external_directory": { "*": "deny" },
+    "webfetch": "ask",
+    "websearch": "allow"
+  }
+}

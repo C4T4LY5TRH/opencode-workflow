@@ -1,70 +1,51 @@
 # opencode mini-project workshop
 
-One brain. Many mini projects. Forever evolving.
+One brain. Many mini projects. Forever evolving. Free models only.
+
+## Start
+```bash
+cd ~/Projects/opencode
+opencode                     # orchestrator is the default agent
+/new "one line goal"         # purpose gate first
+```
+The harness lives in this repo only (`.opencode/`). Outside this folder, opencode is plain opencode.
+Changes to `.opencode/` apply on save; there is no install step.
+Your Claude Code skills are deliberately hidden from opencode (see `TELEPORT.md` for the two settings behind that).
 
 ## Docs
-- `HANDBOOK.md` - build journal + full how-to: every agent, command, skill, plugin, gate, script, with examples
-- `TELEPORT.md` - move this harness to another machine: pack / unpack / verify
+- `HANDBOOK.md` — how it works and how to drive it: agents, commands, gates, scripts, troubleshooting.
+- `AUDIT.md` — the 2026-10-23 audit: what was broken, the evidence, what was fixed, what is next.
+- `TELEPORT.md` — move the harness to another machine (repo bundle + the settings that live outside the repo).
+- `docs/history/` — the v1 handbook and build journal (bugs A–K), kept as a record.
 
 ## Layout
-- `AGENTS.md` - workshop rules (global rules live in `~/.config/opencode/AGENTS.md`; both apply)
-- `harness/`  - source of truth for agents, commands, skills, plugins, brain
-- `harness/brain/` - the brain: rules, prompts, patterns, anti-patterns, evals, changelog
-- `mini-projects/` - each child folder = its own git repo (one project = one repo)
-- `mini-projects/_template/` - the project shape template (single source of truth for scaffold)
-- `harness/scripts/install.sh` - installs harness into `~/.config/opencode` (global) + restarts the service
-
-## Install / update
-```bash
-bash harness/scripts/install.sh     # syncs to ~/.config/opencode + restarts the opencode service
-opencode debug agents    # verify
-opencode debug paths
-opencode debug config
-bash ~/.config/opencode/scripts/bench.sh   # brain + harness structural bench
 ```
-
-## Ops gotchas (learned the hard way -> brain/rules/060-ops.md)
-- opencode runs as a **background service**. Config/plugin/agent changes need `opencode service restart`
-  (install.sh does it for you).
-- Headless `opencode run` cannot answer "ask" permissions -> they auto-reject. Keep happy paths on allow-listed commands.
-- Server cwd can differ from session cwd. Never resolve project paths from `process.cwd()`.
+AGENTS.md            rules loaded in every session here (voice, flow, gates)
+.opencode/           what opencode loads: opencode.json, agents/, commands/, skills/, plugins/
+brain/               rules/, prompts/, patterns/, anti-patterns/, evals/, proposals/, CHANGELOG.md
+scripts/             new-project.sh, bench.sh/.py, gate-test.mjs, bootstrap.sh, html2md.py, snapshot.py
+mini-projects/       one folder = one project = its own git repo; _template/ is the scaffold
+docs/audit/          audit evidence + research
+.harness/            runtime state (gitignored): plugin heartbeat, events log, bench history
+```
 
 ## Daily loop
 ```
-/new <goal>      -> scaffold (purpose gate)
-/scope           -> SCOPE.md (IN / OUT / CUT LINE)
-/research <q>    -> RESEARCH/*.md (cited)
-/plan            -> PLAN.md (steps + done-when)   [human approves]
-/build           -> one step, verified
-/review          -> REVIEW.md
-/blind           -> BLIND.md (blind spots)
-/grill /whatif   -> attack the plan
-/ship            -> gates + human confirm
-/learn           -> brain rule proposals   [human approves]
-/evolve          -> prune + version bump
-/bench           -> did the brain get better?
+/new <goal>     scaffold (purpose gate)         /review <slug>  REVIEW.md (verdict)
+/scope <slug>   SCOPE.md                        /blind <slug>   BLIND.md
+/research <q>   RESEARCH/*.md (cited)           /grill <slug>   DEVIL.md
+/plan <slug>    PLAN.md                         /whatif <slug>  WHATIF.md
+/approve <slug> you approve PLAN.md (recorded)
+/build <slug>   one step, verified              /ship <slug>    gates + you say yes
+/learn <slug>   brain proposal                  /bench          harness health
+/hunt <slug>    BUGHUNT.md (hunter -> skeptic)  /pr-review [target]  independent review (advisory)
+```
+
+## Health
+```bash
+bash scripts/bench.sh        # structure + gates actually fire + models exist + no global copy
+bash scripts/bootstrap.sh    # same, plus tool checks (use on a new machine)
 ```
 
 ## Voice
-Caveman. See `harness/skills/caveman/SKILL.md`. Payload (code, paths, errors) stays verbatim.
-
-## Skills (7, on demand)
-`caveman` voice - `browser` playwright driving - `visual-review` see-and-fix - `html2md` page -> markdown
-- `spec` spec-quality writing - `verify` prove it works - `brain` the rules index
-
-## Helper scripts (free, no installs)
-- `python3 ~/.config/opencode/scripts/html2md.py <url> [-o out.md]` - clean markdown from a page
-- `python3 ~/.config/opencode/scripts/snapshot.py <url> [-o shot.png] [--text]` - screenshot (+ optional md)
-- `bash ~/.config/opencode/scripts/bench.sh` - harness + brain health (27 checks)
-
-## Config hygiene
-`install.sh` backs up to ONE place: `~/.config/opencode/.backups/<timestamp>/` (last 5 runs kept).
-No `.bak` files next to live files, ever.
-
-## Models
-Free tier only for now. Switch instructions: `harness/brain/NOTES-pending-claude-key.md`.
-
-## Browser / visual
-Playwright MCP (free, local). `npx playwright install chromium` once.
-- `/browse <url>` -> snapshot + screenshot, report what you SAW
-- `/html2md <url>` -> clean markdown for cheap ingestion
+Caveman (`.opencode/skills/caveman/SKILL.md`). Payload (code, paths, errors) stays verbatim.

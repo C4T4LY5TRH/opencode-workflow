@@ -1,0 +1,31 @@
+(version 1)
+; macOS sandbox profile for AGENT shell commands (see scripts/sandbox/agent-shell).
+; The last matching rule wins. Params: ROOT = the only project dir agents may write,
+; HOME = the user's home.
+(allow default)
+
+; writes: the project, temp dirs and tool caches only
+(deny file-write*)
+(allow file-write*
+  (subpath (param "ROOT"))
+  (subpath "/private/tmp") (subpath "/private/var/folders")
+  (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper")
+  (literal "/dev/stdout") (literal "/dev/stderr") (regex #"^/dev/fd/")
+  (subpath (string-append (param "HOME") "/.npm"))
+  (subpath (string-append (param "HOME") "/.cache"))
+  (subpath (string-append (param "HOME") "/Library/Caches")))
+
+; never writable, anywhere: harness state (the human's plan approval), and git hooks/config,
+; which would run code later OUTSIDE the sandbox when the human uses git
+(deny file-write* (regex #"/\.harness(/|$)") (regex #"/\.git/hooks(/|$)") (regex #"/\.git/config$"))
+
+; secrets: .env files (not .env.example), keys, credential stores, opencode's own auth + sessions
+(deny file-read*
+  (regex #"/\.env$") (regex #"/\.env\.[^/]+$") (regex #"\.pem$")
+  (subpath (string-append (param "HOME") "/.ssh"))
+  (subpath (string-append (param "HOME") "/.aws"))
+  (subpath (string-append (param "HOME") "/.gnupg"))
+  (subpath (string-append (param "HOME") "/.config/gh"))
+  (subpath (string-append (param "HOME") "/.local/share/opencode"))
+  (literal (string-append (param "HOME") "/.netrc")))
+(allow file-read* (regex #"/\.env\.example$"))

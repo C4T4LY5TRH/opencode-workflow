@@ -1,0 +1,599 @@
+{
+  "fixture": [
+    "mini-projects/_template/BRIEF.md",
+    "mini-projects/bare/BRIEF.md",
+    "mini-projects/bare/src/.keep",
+    "mini-projects/good/PLAN.md",
+    "mini-projects/good/BLIND.md",
+    "mini-projects/good/src/.keep",
+    "mini-projects/noreview/PLAN.md",
+    "mini-projects/noreview/src/.keep",
+    "mini-projects/good/REVIEW.md",
+    "mini-projects/rework/PLAN.md",
+    "mini-projects/rework/REVIEW.md",
+    "mini-projects/rework/BLIND.md",
+    "mini-projects/rework/src/.keep",
+    "mini-projects/unapproved/PLAN.md",
+    "mini-projects/unapproved/src/.keep",
+    "mini-projects/stale/PLAN.md",
+    "mini-projects/stale/src/.keep",
+    "AGENTS.md",
+    "home/.ssh/id_test",
+    "mini-projects/good/.env",
+    "mini-projects/good/.env.example",
+    "mini-projects/good/.git/hooks/.keep"
+  ],
+  "cases": [
+    {
+      "id": "s1",
+      "session": "mini-projects/noreview",
+      "tool": "shell",
+      "input": {
+        "command": "git commit -m x"
+      },
+      "expect": "block",
+      "note": "ship gate: plain commit, no REVIEW.md"
+    },
+    {
+      "id": "s2",
+      "session": "mini-projects/noreview",
+      "tool": "shell",
+      "input": {
+        "command": "git add . && git commit -m x"
+      },
+      "expect": "block",
+      "note": "ship gate: chained commit (&&)"
+    },
+    {
+      "id": "s3",
+      "session": "mini-projects/noreview",
+      "tool": "shell",
+      "input": {
+        "command": "git -C . commit -m x"
+      },
+      "expect": "block",
+      "note": "ship gate: git -C"
+    },
+    {
+      "id": "s4",
+      "session": "mini-projects/noreview",
+      "tool": "shell",
+      "input": {
+        "command": "FOO=1 git commit -m x"
+      },
+      "expect": "block",
+      "note": "ship gate: env prefix"
+    },
+    {
+      "id": "s5",
+      "session": "mini-projects/noreview",
+      "tool": "shell",
+      "input": {
+        "command": "(git commit -m x)"
+      },
+      "expect": "block",
+      "note": "ship gate: subshell"
+    },
+    {
+      "id": "s6",
+      "session": "mini-projects/noreview",
+      "tool": "shell",
+      "input": {
+        "command": "git tag v1"
+      },
+      "expect": "block",
+      "note": "ship gate: tag"
+    },
+    {
+      "id": "s7",
+      "session": "mini-projects/noreview",
+      "tool": "shell",
+      "input": {
+        "command": "git cherry-pick abc"
+      },
+      "expect": "block",
+      "note": "ship gate: cherry-pick creates a commit"
+    },
+    {
+      "id": "s8",
+      "session": "mini-projects/good",
+      "tool": "shell",
+      "input": {
+        "command": "git commit -m x"
+      },
+      "expect": "allow",
+      "note": "commit allowed when REVIEW.md + BLIND.md exist"
+    },
+    {
+      "id": "n1",
+      "session": "mini-projects/noreview",
+      "tool": "shell",
+      "input": {
+        "command": "git status"
+      },
+      "expect": "allow",
+      "note": "no false positive: git status"
+    },
+    {
+      "id": "n2",
+      "session": "mini-projects/noreview",
+      "tool": "shell",
+      "input": {
+        "command": "git log --grep commit"
+      },
+      "expect": "allow",
+      "note": "no false positive: log --grep commit"
+    },
+    {
+      "id": "n3",
+      "session": "mini-projects/good",
+      "tool": "shell",
+      "input": {
+        "command": "echo 'remember to git commit'"
+      },
+      "expect": "allow",
+      "note": "no false positive: echo mentioning commit"
+    },
+    {
+      "id": "p1",
+      "session": "mini-projects/bare",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/src/app.js",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "plan gate: code write, no PLAN.md"
+    },
+    {
+      "id": "p2",
+      "session": "mini-projects/bare",
+      "tool": "edit",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/src/app.js",
+        "oldString": "a",
+        "newString": "b"
+      },
+      "expect": "block",
+      "note": "plan gate: edit, no PLAN.md"
+    },
+    {
+      "id": "p3",
+      "session": "mini-projects/bare",
+      "tool": "write",
+      "input": {
+        "path": "src/app.js",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "plan gate: relative path"
+    },
+    {
+      "id": "p4",
+      "session": "mini-projects/bare",
+      "tool": "patch",
+      "input": {
+        "patchText": "*** Begin Patch\n*** Add File: src/x.js\n+x\n*** End Patch"
+      },
+      "expect": "block",
+      "note": "plan gate: patch blob path"
+    },
+    {
+      "id": "p5",
+      "session": "mini-projects/bare",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/NOTES.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "doc write allowed without a plan"
+    },
+    {
+      "id": "p6",
+      "session": "mini-projects/good",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/good/src/app.js",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "code write allowed with an approved PLAN.md"
+    },
+    {
+      "id": "o1",
+      "session": "mini-projects/good",
+      "tool": "write",
+      "input": {
+        "path": "/Users/someone/.zshrc",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "confinement: absolute path outside project"
+    },
+    {
+      "id": "o2",
+      "session": "mini-projects/good",
+      "tool": "write",
+      "input": {
+        "path": "~/.zshrc",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "confinement: tilde path"
+    },
+    {
+      "id": "o3",
+      "session": "mini-projects/good",
+      "tool": "write",
+      "input": {
+        "path": "../bare/src/x.js",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "confinement: relative escape to sibling project"
+    },
+    {
+      "id": "o4",
+      "session": "mini-projects/good",
+      "tool": "patch",
+      "input": {
+        "patchText": "*** Begin Patch\n*** Add File: /Users/someone/.zshrc\n+x\n*** End Patch"
+      },
+      "expect": "block",
+      "note": "confinement: patch path outside project"
+    },
+    {
+      "id": "o5",
+      "session": "mini-projects/good",
+      "tool": "shell",
+      "input": {
+        "command": "echo x > /Users/someone/.zshrc"
+      },
+      "expect": "block",
+      "note": "confinement: shell redirect outside project"
+    },
+    {
+      "id": "o6",
+      "session": "mini-projects/good",
+      "tool": "shell",
+      "input": {
+        "command": "echo x > notes.txt"
+      },
+      "expect": "allow",
+      "note": "shell redirect inside project is fine"
+    },
+    {
+      "id": "o7",
+      "session": "mini-projects/good",
+      "tool": "shell",
+      "input": {
+        "command": "echo x > /dev/null"
+      },
+      "expect": "allow",
+      "note": "harmless sink /dev/null"
+    },
+    {
+      "id": "s9",
+      "session": "mini-projects/rework",
+      "tool": "shell",
+      "input": {
+        "command": "git commit -m x"
+      },
+      "expect": "block",
+      "note": "ship gate: verdict REWORK blocked"
+    },
+    {
+      "id": "a1",
+      "session": "mini-projects/unapproved",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/unapproved/src/app.js",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "plan gate: PLAN.md exists but the human never approved it"
+    },
+    {
+      "id": "a2",
+      "session": "mini-projects/stale",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/stale/src/app.js",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "plan gate: PLAN.md changed after approval"
+    },
+    {
+      "id": "a3",
+      "session": "mini-projects/good",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/good/.harness/state.json",
+        "content": "{}"
+      },
+      "expect": "block",
+      "note": "approval state: write tool cannot forge .harness/state.json"
+    },
+    {
+      "id": "a4",
+      "session": "mini-projects/good",
+      "tool": "shell",
+      "input": {
+        "command": "echo '{}' > .harness/state.json"
+      },
+      "expect": "block",
+      "note": "approval state: shell redirect cannot forge it"
+    },
+    {
+      "id": "a5",
+      "session": "mini-projects/good",
+      "tool": "patch",
+      "input": {
+        "patchText": "*** Begin Patch\n*** Add File: .harness/state.json\n+{}\n*** End Patch"
+      },
+      "expect": "block",
+      "note": "approval state: patch blob cannot forge it"
+    },
+    {
+      "id": "a6",
+      "session": "mini-projects/good",
+      "tool": "shell",
+      "input": {
+        "command": "cd ../.. && bash scripts/approve.sh good"
+      },
+      "expect": "block",
+      "note": "approval: an agent cannot run the approve script"
+    },
+    {
+      "id": "a7",
+      "session": "mini-projects/bare",
+      "tool": "shell",
+      "input": {
+        "command": "echo 'x' > src/app.js"
+      },
+      "expect": "block",
+      "note": "plan gate: shell redirect into code, no plan"
+    },
+    {
+      "id": "a8",
+      "session": "mini-projects/good",
+      "tool": "shell",
+      "input": {
+        "command": "echo 'x' > src/app.js"
+      },
+      "expect": "allow",
+      "note": "shell redirect into code allowed once the plan is approved"
+    },
+    {
+      "id": "r1",
+      "session": "mini-projects/bare",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/RESEARCH/topic.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "research notes allowed before a plan (/research comes before /plan)"
+    },
+    {
+      "id": "p7",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/BUGHUNT.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "BUGHUNT.md (the /hunt report) is a doc, not code: no plan needed"
+    }
+  ],
+  "approve": [
+    "mini-projects/good",
+    "mini-projects/stale"
+  ],
+  "edit_after_approve": [
+    "mini-projects/stale"
+  ],
+  "sandbox": [
+    {
+      "id": "x1",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "echo x > notes.txt",
+      "expect": "allow",
+      "note": "sandbox: agent writes inside its project"
+    },
+    {
+      "id": "x2",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "echo x > ../bare/x.txt",
+      "expect": "block",
+      "note": "sandbox: agent cannot write a sibling project"
+    },
+    {
+      "id": "x3",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "python3 -c \"open('../bare/y.txt', 'w')\"",
+      "expect": "block",
+      "note": "sandbox: an interpreter cannot write outside either"
+    },
+    {
+      "id": "x4",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "mkdir -p .harness && echo '{}' > .harness/state.json",
+      "expect": "block",
+      "note": "sandbox: .harness/ (approval) is never writable"
+    },
+    {
+      "id": "x5",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "echo x > .git/hooks/pre-commit",
+      "expect": "block",
+      "note": "sandbox: git hooks are never writable"
+    },
+    {
+      "id": "x6",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "cat .env",
+      "expect": "block",
+      "note": "sandbox: .env is unreadable"
+    },
+    {
+      "id": "x7",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "cat .env.example",
+      "expect": "allow",
+      "note": "sandbox: .env.example stays readable"
+    },
+    {
+      "id": "x8",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "cat \"$HOME/.ssh/id_test\"",
+      "expect": "block",
+      "note": "sandbox: ~/.ssh is unreadable"
+    },
+    {
+      "id": "x9",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "test -n \"$HARNESS_TEST_TOKEN\"",
+      "expect": "block",
+      "note": "sandbox: secret-looking env vars are removed"
+    },
+    {
+      "id": "x10",
+      "session": "mini-projects/good",
+      "agent": false,
+      "command": "cat .env",
+      "expect": "allow",
+      "note": "sandbox: your own TUI !cmd is not sandboxed"
+    },
+    {
+      "id": "x11",
+      "session": "",
+      "cwd": "mini-projects/good",
+      "agent": true,
+      "command": "echo x > ../bare/z.txt",
+      "expect": "block",
+      "note": "sandbox: workshop-root session, workdir in a project: confined to that project"
+    },
+    {
+      "id": "x12",
+      "session": "",
+      "agent": true,
+      "command": "echo x > mini-projects/bare/w.txt",
+      "expect": "allow",
+      "note": "sandbox: workshop-root session may write under mini-projects/"
+    },
+    {
+      "id": "x13",
+      "session": "",
+      "agent": true,
+      "command": "echo x > AGENTS.md",
+      "expect": "block",
+      "note": "sandbox: ...but never the harness itself"
+    }
+  ],
+  "telemetry": {
+    "calls": [
+      {
+        "session": "",
+        "tool": "read",
+        "input": {
+          "path": "$ROOT/brain/rules/030-research.md"
+        },
+        "status": "completed"
+      },
+      {
+        "session": "",
+        "tool": "shell",
+        "input": {
+          "command": "cat brain/rules/030-research.md brain/rules/010-voice.md"
+        },
+        "status": "completed"
+      },
+      {
+        "session": "",
+        "tool": "read",
+        "input": {
+          "path": "$ROOT/brain/rules/020-gates.md"
+        },
+        "status": "error"
+      },
+      {
+        "session": "",
+        "tool": "write",
+        "input": {
+          "path": "$ROOT/mini-projects/good/src/a.js",
+          "content": "x"
+        },
+        "status": "completed"
+      },
+      {
+        "session": "",
+        "tool": "read",
+        "input": {
+          "path": "$ROOT/mini-projects/_template/BRIEF.md"
+        },
+        "status": "completed"
+      },
+      {
+        "session": "mini-projects/bare",
+        "tool": "read",
+        "input": {
+          "path": "NOTES.md"
+        },
+        "status": "completed"
+      }
+    ],
+    "expect_rules": {
+      "030-research.md": 2,
+      "010-voice.md": 1
+    },
+    "not_counted": [
+      "020-gates.md"
+    ],
+    "expect_projects": [
+      "good",
+      "bare"
+    ]
+  },
+  "decay": {
+    "usage": {
+      "since": "2026-01-01T00:00:00.000Z",
+      "rules": {
+        "010-voice.md": {
+          "count": 5,
+          "last": "2026-05-01T00:00:00.000Z"
+        },
+        "030-research.md": {
+          "count": 1,
+          "last": "2026-09-01T00:00:00.000Z"
+        }
+      },
+      "projects": {
+        "p1": "2026-06-01T00:00:00.000Z",
+        "p2": "2026-07-01T00:00:00.000Z",
+        "p3": "2026-08-01T00:00:00.000Z",
+        "p4": "2026-09-15T00:00:00.000Z"
+      }
+    },
+    "decay": [
+      "010-voice.md",
+      "020-gates.md"
+    ],
+    "keep": [
+      "000-core.md",
+      "030-research.md"
+    ]
+  }
+}

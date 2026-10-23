@@ -2,5 +2,8 @@ mini-projects/*
 !mini-projects/_template/
 .DS_Store
 *.log
-.DS_Store
 .playwright-mcp/
+.archive/
+.harness/
+.gate-test-*/
+CLAUDE.md
