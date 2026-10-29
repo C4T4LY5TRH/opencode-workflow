@@ -2,6 +2,27 @@
 
 Format: `## vX.Y - date - one line what changed and why`
 
+## v3.0 - 2026-10-25 - the /go loop: recorded steps, /status + dashboard, 9 agents, 9 commands
+Why: v2.2 was strong but heavy (too much to remember, too many steps). Design: docs/superpowers/specs/2026-10-25-harness-v3-design.md.
+- One `/go <slug>`: scripts/next.py decides the phase (PLAN, APPROVE, BUILD, STUCK, REVIEW, FIX, SHIP); the orchestrator
+  carries out one instruction and stops. PLAN.md now holds the SCOPE and numbered steps, each with one `done when` check.
+  `/approve` parses the plan and records the steps (scripts/harness_state.py); re-approval keeps unchanged done steps.
+- Step recording in the safety-gate plugin: a step is done only when its exact check runs at the project root and exits 0. Failure (non-zero, error, timeout, kill) adds an attempt and keeps the last 40 lines. 2 failed checks = STUCK.
+- Review freshness: the plugin records the REVIEW.md verdict and a hash of the project's code. The ship gate needs a
+  recorded SHIP, a live REVIEW.md that says SHIP, and a matching hash. Max 2 review->fix rounds.
+- `/status` and `.harness/dashboard.html` (scripts/status.py; self-refreshing, read-only). Credit per project is not on it.
+- 14 agents -> 9, 20 commands -> 9. Removed: /scope /plan /build /blind /grill /whatif /learn /evolve /bench /map /browse
+  /html2md /caveman /pr-review. New: /go /status /critique; /ship now also drafts the brain proposal. Models are set per
+  agent in opencode.json only (Claude Haiku/Sonnet for orchestrator, planner, builder, hunter; after the live run also reviewer and brain on Haiku;
+  free models critique and verify).
+- Security: the builder's shell is `*: allow` (the sandbox is the control). `git push` and publish commands are denied by
+  policy for every agent, but that is a speed bump; the sandbox now withholds push/publish credentials (~/.npmrc,
+  ~/.pypirc, ~/.yarnrc.yml, git credential files, the keychain helper by name, the launchd ssh-agent socket). Known gap:
+  a copied keychain helper or /usr/bin/security still works, so keep git HTTPS tokens out of the keychain. Write tools
+  are confined to mini-projects/<slug>/, brain/proposals/ and RESEARCH/ for every session (workshop root too), with
+  symlinks and different-case spellings of PLAN/REVIEW/CRITIQUE/BUGHUNT refused.
+- Rules 020-gates, 050-mini-project, 060-ops and AGENTS.md follow the loop. Tests: bench, gate-test, state-test.
+
 ## v2.2 - 2026-10-24 - the audit backlog: recorded approval, shell sandbox, rule telemetry, /hunt fixes
 - Recorded plan approval: human-typed `/approve <slug>` runs scripts/approve.sh (command template, no agent),
   which stores the PLAN.md sha256 in the project's .harness/state.json. The plan gate needs that hash to match

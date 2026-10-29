@@ -8,7 +8,8 @@ metadata:
 ---
 # html2md
 
-Script: `python3 ~/Projects/opencode/scripts/html2md.py <url|file> [-o out.md]`
+Script, from the workshop root: `python3 scripts/html2md.py <url|file>` (exactly that spelling; it prints the markdown).
+Save it with the write tool: an agent shell with no project workdir is read-only, so `-o` cannot write there.
 
 What it does (stdlib only, no installs):
 - fetch with browser-like UA

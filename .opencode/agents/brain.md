@@ -1,7 +1,6 @@
 ---
-description: Meta-agent. Reads past project lessons and brain evals, writes rule-change PROPOSALS for the human to apply. Use at end of project via /learn.
+description: Meta-agent. Reads past project lessons and brain evals, writes rule-change PROPOSALS for the human to apply. Use at end of project via /ship.
 mode: subagent
-model: opencode/big-pickle
 temperature: 0.3
 hidden: true
 permission:
@@ -9,8 +8,6 @@ permission:
     "*": deny
     "brain/proposals/**": allow
     "**/brain/proposals/**": allow
-    "LEARNINGS.md": allow
-    "**/LEARNINGS.md": allow
   shell:
     "*": deny
     "ls*": allow

@@ -19,18 +19,16 @@ BRAIN = os.path.join(WORKSHOP, "brain")
 RULES = os.path.join(BRAIN, "rules")
 RUNTIME = os.path.join(WORKSHOP, ".harness")
 
-AGENTS = ["orchestrator", "scoper", "architect", "researcher", "visual-review", "coder",
-          "reviewer", "critic", "devil", "whatif", "brain"]
-COMMANDS = ["new", "scope", "research", "plan", "build", "review", "grill", "whatif",
-            "blind", "ship", "learn", "evolve", "bench", "caveman", "browse", "html2md", "map", "approve"]
+AGENTS = ["orchestrator", "planner", "builder", "reviewer", "critic", "researcher", "brain"]
+COMMANDS = ["new", "go", "approve", "ship", "status", "critique", "hunt", "review", "research"]
 SKILLS = ["caveman", "browser", "visual-review", "html2md", "spec", "brain", "verify"]
 # review kit (installed 2026-10-23). These agents have strict machine-read output formats
-# (BUG-n blocks, review report), so they do NOT use the DID/BASIS contract the 11 above carry.
-KIT_AGENTS = ["code-reviewer", "bug-hunter", "bug-skeptic"]
-KIT_COMMANDS = ["hunt", "pr-review"]
+# (BUG-n blocks), so they do NOT use the DID/BASIS contract the 7 above carry. (v3: the kit's
+# code-reviewer is merged into reviewer, which writes REVIEW.md and does carry the contract.)
+KIT_AGENTS = ["hunter", "skeptic"]
 KIT_SKILLS = ["bug-hunt", "code-review"]
 ALL_AGENTS = AGENTS + KIT_AGENTS
-ALL_COMMANDS = COMMANDS + KIT_COMMANDS
+ALL_COMMANDS = COMMANDS
 ALL_SKILLS = SKILLS + KIT_SKILLS
 
 results = []
@@ -103,11 +101,15 @@ check("frontmatter-no-dupes", "no duplicate top-level keys", not dup, ",".join(d
 
 # --- agents / commands / skills present
 agent_files = [f[:-3] for f in md_files(os.path.join(OPEN, "agents"))]
-check("agents-present", "14 custom agents exist", all(a in agent_files for a in ALL_AGENTS),
-      ",".join(a for a in ALL_AGENTS if a not in agent_files))
+extra_agents = [a for a in agent_files if a not in ALL_AGENTS]
+check("agents-present", f"exactly the {len(ALL_AGENTS)} custom agents exist",
+      all(a in agent_files for a in ALL_AGENTS) and not extra_agents,
+      ",".join([f"missing:{a}" for a in ALL_AGENTS if a not in agent_files] + [f"extra:{a}" for a in extra_agents]))
 cmd_files = [f[:-3] for f in md_files(os.path.join(OPEN, "commands"))]
-check("commands-present", f"{len(ALL_COMMANDS)} commands exist", all(c in cmd_files for c in ALL_COMMANDS),
-      f"found {len(cmd_files)}")
+extra_cmds = [c for c in cmd_files if c not in ALL_COMMANDS]
+check("commands-present", f"exactly the {len(ALL_COMMANDS)} commands exist",
+      all(c in cmd_files for c in ALL_COMMANDS) and not extra_cmds,
+      ",".join([f"missing:{c}" for c in ALL_COMMANDS if c not in cmd_files] + [f"extra:{c}" for c in extra_cmds]))
 skill_bad = [s for s in ALL_SKILLS if not ("name:" in read(os.path.join(OPEN, "skills", s, "SKILL.md"))
              and "description:" in read(os.path.join(OPEN, "skills", s, "SKILL.md")))]
 check("skills-present", "9 skills with frontmatter", not skill_bad, ",".join(skill_bad))
@@ -139,6 +141,21 @@ check("commands-agents-resolve", "every command targets an existing, enabled age
 check("orchestrator-can-reach", "orchestrator may spawn every worker its commands delegate to",
       not unreachable, ",".join(unreachable))
 
+# --- an agent file with the v2 `permissions:` list must use only native keys: one v1 key (e.g.
+#     `temperature`) makes opencode 2.1.3 decode the file as v1 and silently DROP the list
+#     (core/src/config/plugin/agent.ts decode; seen live on the reviewer, 2026-10-25)
+NATIVE_KEYS = {"model", "variant", "request", "system", "description", "mode", "hidden", "color", "steps",
+               "disabled", "permissions"}
+legacy_kit = []
+for a in agent_files:
+    fm = read(os.path.join(OPEN, "agents", a + ".md"))[4:].split("\n---\n")[0]
+    keys = {l.split(":", 1)[0].strip() for l in fm.split("\n") if l and not l[0].isspace() and ":" in l
+            and not l.startswith("#")}
+    if "permissions" in keys and keys - NATIVE_KEYS:
+        legacy_kit.append(f"{a}:{','.join(sorted(keys - NATIVE_KEYS))}")
+check("permission-lists-load", "agents with a permissions: list use only native keys", not legacy_kit,
+      ",".join(legacy_kit))
+
 # --- every agent reports with the shared contract
 missing_contract = [a for a in AGENTS if "BLOCKED:" not in read(os.path.join(OPEN, "agents", a + ".md"))]
 check("agents-report-contract", "all agents carry the report contract", not missing_contract, ",".join(missing_contract))
@@ -154,8 +171,12 @@ pol = cfg.get("policies", [])
 pol_res = {p.get("resource") for p in pol if p.get("effect") == "deny"}
 need_pol = ["execute:*", "shell:*rm -rf /*", "shell:*git reset --hard*", "shell:*curl *--data*",
             "shell:*git *--output*", "shell:*rg *--pre*",   # "read-only" commands that write / execute
+            "shell:*find * -exec*", "shell:*-execdir*",
             "edit:*.harness/*", "shell:*approve.sh*",     # plan approval is human-only
-            "playwright_browser_run_code_unsafe:*"]
+            "playwright_browser_run_code_unsafe:*",
+            # v3: nothing asks the trusting builder, so push and publish are human-only
+            "shell:*git push*", "shell:*npm publish*", "shell:*pnpm publish*", "shell:*yarn publish*",
+            "shell:*twine upload*", "shell:*gh release*"]
 miss_pol = [r for r in need_pol if r not in pol_res]
 check("policies-hard-stops", "policies deny Code Mode + destructive + exfil", not miss_pol, ",".join(miss_pol))
 # a policy deny does not hide a tool; only a permission-layer deny does (verified live)
@@ -167,10 +188,20 @@ if isinstance(cfg.get("compaction"), dict) and "prune" in cfg["compaction"]:
     legacy.append("compaction.prune")
 check("config-no-legacy-keys", "no silently-dropped legacy config keys", not legacy, ",".join(legacy))
 
-# --- every agent model resolves against `opencode models`
+# --- models live in ONE place: opencode.json agent.<name>.model. An agent file's own `model:`
+#     line silently wins over opencode.json (spec 14.1 fact 2), so none may have one.
+md_model = [a for a in agent_files
+            if re.search(r"^model:", read(os.path.join(OPEN, "agents", a + ".md")).split("\n---\n")[0], re.M)]
+check("models-one-place", "no agent file has its own model: line", not md_model, ",".join(md_model))
+agent_cfg = cfg.get("agent", {}) if isinstance(cfg.get("agent"), dict) else {}
+
+
 def agent_model(a):
-    m = re.search(r"^model:\s*(\S+)", read(os.path.join(OPEN, "agents", a + ".md")), re.M)
-    return m.group(1) if m else ""
+    entry = agent_cfg.get(a)
+    return entry.get("model", "") if isinstance(entry, dict) else ""
+
+
+# --- every agent model (opencode.json) resolves against `opencode models`
 try:
     avail = set(subprocess.run(["opencode", "models"], capture_output=True, text=True, timeout=60).stdout.split())
 except Exception:
@@ -182,6 +213,82 @@ if avail:
 else:
     check("models-resolve", "every agent model is available", False, "could not run `opencode models`")
 
+
+# --- the builder may write any code but never a gate file. The plugin trusts a REVIEW.md written by a
+#     write/edit/patch tool, and it confines those tools to mini projects (and refuses symlinks), but it does
+#     not know which agent writes: inside a project, the builder's edit deny on REVIEW.md is what stops it
+#     forging a SHIP review. Evaluated the way opencode does: the global edit rules, then the builder's own,
+#     last match wins; `*` matches across `/` (core/src/util/wildcard.ts).
+def wildcard(path, pattern):
+    rx = re.sub(r"[.+^${}()|\[\]\\]", lambda m: "\\" + m.group(0), pattern.replace("\\", "/"))
+    rx = rx.replace("*", ".*").replace("?", ".")
+    if rx.endswith(" .*"):
+        rx = rx[:-3] + "( .*)?"
+    return re.fullmatch(rx, path.replace("\\", "/"), re.S) is not None
+
+
+def frontmatter_rules(text, section):
+    """Ordered (pattern, effect) pairs of `permission:` -> `<section>:` in an agent's frontmatter."""
+    fm = text[4:].split("\n---\n")[0] if text.startswith("---\n") else ""
+    rules, inside = [], False
+    for line in fm.split("\n"):
+        if re.match(rf"^  {re.escape(section)}:\s*$", line):
+            inside = True
+            continue
+        if inside:
+            m = re.match(r"^    \"?([^\"]+?)\"?:\s*(allow|deny|ask)\s*(#.*)?$", line)
+            if m:
+                rules.append((m.group(1), m.group(2)))
+            elif line.strip() and not line.strip().startswith("#"):
+                break
+    return rules
+
+
+def decide(path, rules):
+    effect = "ask"
+    for pattern, eff in rules:
+        if wildcard(path, pattern):
+            effect = eff
+    return effect
+
+
+global_edit = list((perm_map.get("edit") or {}).items()) if isinstance(perm_map.get("edit"), dict) else []
+builder_edit = frontmatter_rules(read(os.path.join(OPEN, "agents", "builder.md")), "edit")
+P = "mini-projects/demo/"
+must_deny = ["PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md", ".env", ".env.local", "config/.env",
+             "prod.env", ".git/config", ".git/hooks/pre-commit"]
+probes = [p for f in must_deny for p in (f, P + f, os.path.join(WORKSHOP, P + f))]
+writable = [p for p in probes if decide(p, global_edit + builder_edit) != "deny"]
+code_ok = decide(P + "src/app.js", global_edit + builder_edit) == "allow"
+check("builder-cannot-write-gate-files", "builder edit denies PLAN/REVIEW/CRITIQUE/BUGHUNT/.env/.git, allows code",
+      bool(builder_edit) and not writable and code_ok,
+      ("no edit rules found in builder.md" if not builder_edit else
+       ",".join(writable[:6]) + ("" if code_ok else " code write not allowed")))
+
+# --- only the reviewer may write REVIEW.md (the ship gate trusts a REVIEW.md written by a write tool), so
+#     every agent opencode really loaded (custom and built-in) must resolve it to deny, the reviewer to allow
+try:
+    loaded = json.loads(subprocess.run(["opencode", "debug", "agents"], capture_output=True, text=True,
+                                       timeout=60, cwd=WORKSHOP).stdout)
+except Exception:
+    loaded = []
+
+
+def resolve(perms, action, resource):
+    eff = None
+    for r in perms:
+        if wildcard(action, r.get("action", "")) and wildcard(resource, r.get("resource", "")):
+            eff = r.get("effect")
+    return eff
+
+
+rv_probes = ["REVIEW.md", P + "REVIEW.md", os.path.join(WORKSHOP, P + "REVIEW.md")]
+rv_bad = [f"{a.get('id')}:{p}={resolve(a.get('permissions', []), 'edit', p)}" for a in loaded for p in rv_probes
+          if resolve(a.get("permissions", []), "edit", p) != ("allow" if a.get("id") == "reviewer" else "deny")]
+check("only-reviewer-writes-review", "no loaded agent but the reviewer may write REVIEW.md",
+      bool(loaded) and any(a.get("id") == "reviewer" for a in loaded) and not rv_bad,
+      "could not run `opencode debug agents`" if not loaded else ",".join(rv_bad[:6]))
+
 # --- plugins present + the gates actually FIRE
 plugins = os.listdir(os.path.join(OPEN, "plugins")) if os.path.isdir(os.path.join(OPEN, "plugins")) else []
 check("plugins-present", "safety-gate + brain-log installed",
@@ -192,6 +299,14 @@ try:
     check("gates-fire", "safety-gate plugin fires on every gate case", gt.returncode == 0, last)
 except Exception as exc:
     check("gates-fire", "safety-gate plugin fires on every gate case", False, str(exc)[:120])
+
+# --- state library (plan parsing, approval, tree hash, phase)
+try:
+    st = subprocess.run([sys.executable, os.path.join(HERE, "state-test.py")], capture_output=True, text=True, timeout=120)
+    tail = (st.stderr.strip().splitlines() or st.stdout.strip().splitlines() or [""])[-1]
+    check("state-tests", "state library unit tests pass", st.returncode == 0, tail)
+except Exception as exc:
+    check("state-tests", "state library unit tests pass", False, str(exc)[:120])
 
 # --- OS sandbox for agent shells (macOS sandbox-exec); gates-fire runs its cases for real
 sbx = os.path.join(HERE, "sandbox")
@@ -209,7 +324,7 @@ check("plugins-alive", "plugins reported a load heartbeat", bool(alive.strip()) 
 
 # --- template ships NO gate files (else the gates are no-ops in every new project)
 tpl = os.path.join(WORKSHOP, "mini-projects", "_template")
-leak = [f for f in ("PLAN.md", "SCOPE.md", "REVIEW.md", "BLIND.md") if os.path.isfile(os.path.join(tpl, f))]
+leak = [f for f in ("PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md") if os.path.isfile(os.path.join(tpl, f))]
 check("template-clean", "template ships no gate files", not leak, ",".join(leak))
 tpl_need = [f for f in ("BRIEF.md", "AGENTS.md", "README.md", "NOTES.md", "LEARNINGS.md")
             if not os.path.isfile(os.path.join(tpl, f))]

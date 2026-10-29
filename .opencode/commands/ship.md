@@ -1,16 +1,20 @@
 ---
-description: Gate check then ship. All gates must pass, human confirms.
+description: Ship checklist, then the brain drafts one lesson proposal. You commit, push and publish yourself.
 agent: orchestrator
 ---
-Project: $ARGUMENTS
+Project "$ARGUMENTS". If no slug was given: ask for one, stop. The status script already ran when the human typed this command; its output:
 
-Gate checklist. Check each, fail fast, report which failed:
-1. PLAN.md exists and the human approved it: `cat mini-projects/$ARGUMENTS/.harness/state.json` shows the approval.
-2. SCOPE.md exists; no OUT items were built.
-3. REVIEW.md exists; verdict is SHIP (not FIX FIRST, not REWORK); no open blocker.
-4. BLIND.md exists; top risks have an owner or are accepted.
-5. Tests pass: delegate @reviewer to run the project's test/build command and paste the real output. You cannot run it yourself.
-6. `git status` and `git diff --cached --name-only` show no .env, secrets or node_modules.
+!`python3 scripts/status.py "$ARGUMENTS" && python3 scripts/status.py --html >/dev/null 2>&1; true`
 
-If all pass: show the exact commit message and the exact git commands. Ask the human: "SHIP? yes/no". The human runs the commit, or approves it when asked. The safety gate also blocks any commit while REVIEW.md or BLIND.md is missing.
-If any fail: stop, name the failed gate, give the one command that fixes it.
+The review's blind spots and the project's `git status --short`, printed by the same template:
+
+!`awk '/^## /{p=/^## Blind spots/} p' "mini-projects/$ARGUMENTS/REVIEW.md" 2>/dev/null || echo "(no REVIEW.md)"; echo "git status --short:"; git -c core.fsmonitor=false -c safe.bareRepository=explicit -C "mini-projects/$ARGUMENTS" status --short 2>&1; true`
+
+Checklist. Everything you need is printed above: run no shell. Fail fast, name the failed item, give the one command that fixes it:
+1. The first status line says SHIP (every step done, fresh review, verdict SHIP). If not, stop and give its `next:` command. That line is the freshness check for the human's commit; you do not judge it.
+2. Show the `## Blind spots` section above. Ask the human to accept those risks or name an owner. None printed = item 2 fails: run /go $ARGUMENTS to review again.
+3. The `git status --short` lines above show no .env, secrets or node_modules.
+
+All pass: show the exact commit message and the exact git commands to run in `mini-projects/$ARGUMENTS` (`git add ...`, `git commit -m ...`). THE HUMAN runs them (agents cannot write `.git`), before editing any code: nothing re-checks the review at that point. Ask the human to reply "committed" when done. Push and publish are human-only too: denied for every agent.
+
+Only after the human replies that the commit is done: delegate @brain once. Brief: read mini-projects/$ARGUMENTS/LEARNINGS.md, NOTES.md and REVIEW.md, plus brain/rules and brain/evals/bench.yaml; write ONE proposal to brain/proposals/<date>-$ARGUMENTS.md (if nothing meets the promotion bar, the proposal says so in one line). Then `ls brain/proposals/` to confirm it exists. Never tell the human a file exists unless ls shows it. Relay the file name; applying it is the human's job. Last line: NEXT: read the proposal, apply what you approve.

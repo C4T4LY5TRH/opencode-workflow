@@ -4,7 +4,8 @@
 # usage:  bash scripts/approve.sh <slug>      (normally via the /approve command)
 #
 # Only the human-typed /approve command runs this: its !`...` line runs outside any
-# agent shell. Writes mini-projects/<slug>/.harness/state.json with the plan's sha256.
+# agent shell. harness_state.py parses PLAN.md (refusing a plan it cannot parse) and writes
+# mini-projects/<slug>/.harness/state.json: the plan's sha256 plus its steps.
 # The safety-gate plan gate allows code writes only while PLAN.md still has that hash,
 # so any edit to the plan revokes the approval. Agents cannot write .harness/ and
 # cannot run this script (safety-gate plugin + policies).
@@ -25,12 +26,9 @@ esac
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ="$(cd "$HERE/.." && pwd)/mini-projects/$SLUG"
 if [ ! -f "$PROJ/PLAN.md" ]; then
-  echo "REFUSED: no PLAN.md in mini-projects/$SLUG. Run /plan $SLUG first." >&2
+  echo "REFUSED: no PLAN.md in mini-projects/$SLUG. Run /go $SLUG first." >&2
   exit 1
 fi
 
-SHA="$(shasum -a 256 "$PROJ/PLAN.md" | cut -d' ' -f1)"
-mkdir -p "$PROJ/.harness"
-printf '{\n  "plan_sha256": "%s",\n  "approved_at": "%s"\n}\n' "$SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  > "$PROJ/.harness/state.json"
-echo "APPROVED: mini-projects/$SLUG/PLAN.md (sha256 ${SHA:0:12}). Any edit to PLAN.md revokes this; /approve again after a change."
+# plan parsing, step recording and the state file are the library's job
+exec python3 "$HERE/harness_state.py" approve "$PROJ"

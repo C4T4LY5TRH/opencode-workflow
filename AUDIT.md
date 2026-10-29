@@ -266,14 +266,24 @@ gate test faking the plugin heartbeat, and the teleport procedure was never test
 24 checks; the gate test 25 cases. All test sessions and sandboxes created during the audit were deleted afterwards.
 
 **Backlog closed (v2.2, 2026-10-24):** the follow-ups this audit left open are done, each with tests and a live run
-through opencode 2.1.3 (`HANDBOOK.md` §14, `brain/CHANGELOG.md` v2.2): recorded plan approval via a human-typed
+through opencode 2.1.3 (the v2.2 handbook on branch `harness-v2`, `brain/CHANGELOG.md` v2.2): recorded plan approval via a human-typed
 `/approve` (P1-9); an OS sandbox for every agent shell, with `python3`/`node` now allowed for the coder (P2-6); rule-usage
 telemetry plus an eval per rule (L6); the `/hunt` referee now also requires the skeptic's severity to be unchanged; `/hunt`
 writes `BUGHUNT.md`. Bench 26 checks; gate test 56 cases.
 
+**v3 (2026-10-25, branch `harness-v3`):** v3 supersedes the workflow described in §5-§8 (the `/scope`, `/plan`, `/build`,
+`/blind` loop is now `/go`; see `HANDBOOK.md`). The security findings above still hold; v3 touched three of them. (1) The
+write confinement that P2-4 asked for now covers every session, including ones started at the workshop root, and refuses
+symlinks and different-case spellings of PLAN/REVIEW/CRITIQUE/BUGHUNT; agents write only `mini-projects/<slug>/`,
+`brain/proposals/` and `RESEARCH/`. This closes the workshop-root gap P2-4 described. (2) The builder now trusts the sandbox
+(its shell is `*: allow` inside its project), which makes P2-6's sandbox the main control, so `git push` and publishing are
+denied by policy as a speed bump and the sandbox withholds push/publish credentials; a copied keychain helper or
+`/usr/bin/security` is a known residual (`HANDBOOK.md` §7). (3) The ship gate (P0-1, P1-3) also requires a fresh review:
+a recorded SHIP verdict plus a matching code hash.
+
 **Still open:**
-1. Merge `harness-v2` into `main`, after you have run real projects through it and are happy with it.
-2. Known limits, by design (`HANDBOOK.md` §4): the sandbox covers shell only (grep/glob tools and the Playwright MCP server
+1. Merge `harness-v3` (or `harness-v2`) into `main`, after you have run real projects through it and are happy with it.
+2. Known limits, by design (`HANDBOOK.md` §7): the sandbox covers shell only (grep/glob tools and the Playwright MCP server
    are outside it), it is macOS-only, and network stays open.
 
 ---

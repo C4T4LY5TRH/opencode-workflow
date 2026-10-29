@@ -1,27 +1,31 @@
 # NOTE - model setup
 
-Current: free OpenCode Zen models only. Assigned per agent in `.opencode/agents/*.md` (`model:`).
-Verified responding on 2026-10-23 (`opencode run --model ...`):
-- orchestrator / architect / coder / brain: opencode/big-pickle
-- scoper: opencode/glm-5.3-flash-free
-- reviewer: opencode/deepseek-v4.1-flash-free
+All agent models live in ONE place: `.opencode/opencode.json` -> `agent.<name>.model` (v3).
+Agent files carry no `model:` line: a `model:` line in an agent `.md` silently wins over opencode.json
+(spec §14.1 fact 2), and the bench check `models-one-place` fails if one comes back.
+
+Current (v3, 2026-10-25). Claude for the hard roles (Anthropic API key, `opencode auth login`), free
+OpenCode Zen models for the checking roles:
+- orchestrator: anthropic/claude-haiku-5-5
+- planner: anthropic/claude-sonnet-5-5
+- builder: anthropic/claude-sonnet-5-5
+- hunter: anthropic/claude-sonnet-5-5
+- reviewer: anthropic/claude-haiku-5-5 (was opencode/flint-40b-free until the 2026-10-25 live run, where the free
+  usage limit stalled /go's review)
+- skeptic: opencode/deepseek-v4.1-flash-free (fixture-test winner; a different family from the hunter on purpose)
 - critic: opencode/nemotron-3-ultra-free
-- devil: opencode/mimo-v2.6-flash-free
-- whatif: opencode/nemotron-3.5-lightning-free
-- researcher: opencode/beam-free
-- visual-review: opencode/nemotron-3.5-super-vl-free (vision)
-- code-reviewer: opencode/flint-40b-free (least reliable: returned "Endpoint is unavailable" once; fallback mimo-v2.6-flash-free)
-- bug-hunter: opencode/nemotron-3-ultra-free
-- bug-skeptic: opencode/deepseek-v4.1-flash-free (keep it a different family from bug-hunter)
+- researcher: opencode/nemotron-3.5-super-vl-free (vision, for screenshots)
+- brain: anthropic/claude-haiku-5-5 (was opencode/glm-5.3-flash-free; same free-limit stall in /ship)
 
-Free models come and go without notice (minimax-m3.1 and longcat-2.5 disappeared during the
-audit). `bash scripts/bench.sh` checks every agent model against `opencode models`. Run it first
-when an agent fails with "Model unavailable".
+Families: Claude builds and hunts; non-Claude models critique and verify bugs, so those checkers do not share the
+builder's blind spots. Since 2026-10-25 the reviewer and brain are Claude Haiku (free limits stalled the loop);
+that trade was the human's call (spec §3).
 
-SWITCH to a paid key later:
-1. `opencode auth login` (or export the provider key).
-2. Change the `model:` line in the agent files you want to upgrade (orchestrator, architect,
-   coder, brain are the highest-value roles). Use current model IDs from `opencode models`.
-3. `bash scripts/bench.sh` -> confirm every model resolves.
-Keep the critique roles (reviewer, critic, devil) on different model families than the coder,
-so they do not echo its blind spots.
+Free models come and go without notice (minimax-m3.1 and longcat-2.5 disappeared during the v2 audit).
+`bash scripts/bench.sh` checks every model in opencode.json against `opencode models` (`models-resolve`).
+Run it first when an agent fails with "Model unavailable".
+
+To change a model:
+1. Edit `agent.<name>.model` in `.opencode/opencode.json`. Use an ID from `opencode models`.
+2. `bash scripts/bench.sh` -> `models-resolve` passes.
+3. `opencode debug agents` -> the agent shows the new model.

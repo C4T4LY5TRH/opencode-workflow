@@ -9,7 +9,7 @@
 # shell string out of user text (AUDIT.md P2-1). /new passes it through a quoted
 # heredoc, so quotes, $(...) and ; in a goal stay plain text.
 #
-# The template ships NO gate files (PLAN/SCOPE/REVIEW/BLIND). They appear only
+# The template ships NO gate files (PLAN/REVIEW/CRITIQUE/BUGHUNT). They appear only
 # when their owning agent writes them, so the plan and ship gates mean something
 # from the first minute (AUDIT.md P0-2).
 set -euo pipefail
@@ -46,6 +46,7 @@ fi
 [ -z "$SLUG" ] && SLUG="project"
 case "$SLUG" in
   _*|*[!a-z0-9_-]*) echo "ERROR: slug must be lowercase letters, digits, - or _, not starting with _: $SLUG" >&2; exit 2 ;;
+  brain) echo "ERROR: slug 'brain' is reserved (/status brain shows the brain); pass another slug" >&2; exit 2 ;;
 esac
 
 DIR="$PROJECTS/$SLUG"
@@ -82,11 +83,11 @@ for base, _dirs, files in os.walk(root):
 PY
 
 # each mini project is its own git repo; fail loudly if that cannot happen
-if ! (cd "$DIR" && git init -q); then
+if ! (cd "$DIR" && git -c core.fsmonitor=false init -q); then
   echo "ERROR: git init failed in $DIR" >&2
   exit 1
 fi
 
 echo "created: $DIR"
 echo "files:   $(cd "$DIR" && ls -A | tr '\n' ' ')"
-echo "next:    /scope $SLUG"
+echo "next:    /go $SLUG"

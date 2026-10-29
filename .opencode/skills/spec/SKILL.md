@@ -6,7 +6,7 @@ compatibility: opencode
 metadata:
   opencode/slash: "true"
 ---
-# Spec (write it so the coder cannot guess)
+# Spec (write it so the builder cannot guess)
 
 A spec is a decision record, not a wishlist. It removes guesses.
 
@@ -36,6 +36,5 @@ A spec is a decision record, not a wishlist. It removes guesses.
 
 ## Where it plugs in
 - Human writes BRIEF.md (goal + why + done when life) - 5 lines, no more.
-- Scoper turns the brief into SCOPE.md (IN / OUT / LATER / CUT LINE / RISK).
-- Architect turns SCOPE into PLAN.md (steps, files, done-when, acceptance).
-- Spec skill = the quality bar for BRIEF / SCOPE / PLAN. Use it when writing any of them.
+- Planner turns the brief into PLAN.md: a SCOPE section (IN / OUT / LATER / CUT LINE / RISK), then steps with files, done-when and acceptance.
+- Spec skill = the quality bar for BRIEF / PLAN. Use it when writing either.

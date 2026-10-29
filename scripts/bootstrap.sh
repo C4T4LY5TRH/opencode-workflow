@@ -43,7 +43,7 @@ esac
 if ls "$HOME/Library/Caches/ms-playwright" 2>/dev/null | grep -q chromium; then
   ok "playwright chromium present"
 else
-  warn "playwright chromium missing - run: npx playwright install chromium   (needed for /browse)"
+  warn "playwright chromium missing - run: npx playwright install chromium   (needed for /research on rendered pages)"
 fi
 
 # a global harness copy would merge with this one and break plugin loading
@@ -51,6 +51,17 @@ gdir="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
 for d in agents commands skills plugins brain; do
   if [ -d "$gdir/$d" ]; then bad "global harness folder found: $gdir/$d - remove it (the harness lives in this repo only)"; fi
 done
+
+# v3 runs the orchestrator, planner, builder, reviewer, hunter and brain on Anthropic Claude. The key lives in
+# opencode's auth store (outside the repo). Only the provider line is checked; the credential is never read or shown.
+# Captured first: `grep -q` stops reading at the first match, sed then dies of SIGPIPE, and pipefail made that a WARN.
+auth_list="$(opencode auth list 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"
+if grep -qi 'anthropic' <<<"$auth_list"; then
+  ok "anthropic credential stored (opencode auth list)"
+else
+  warn "no Anthropic credential stored - the Claude agents will fail on their first call. Run (you, not an agent):"
+  echo "         opencode auth login      # choose Anthropic, paste the API key"
+fi
 
 # Settings that live OUTSIDE the repo and so do not travel with it (TELEPORT.md). Warn, don't fail:
 # the harness works without them, but opencode would then also see your Claude Code skills.

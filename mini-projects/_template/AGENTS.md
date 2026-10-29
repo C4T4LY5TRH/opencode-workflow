@@ -1,9 +1,9 @@
 # PROJECT RULES - {{SLUG}}
 
-Global harness rules live in ~/.config/opencode/AGENTS.md. This file = project only.
+Workshop harness rules live in the workshop root AGENTS.md. This file = project only.
 
 ## STACK
-TODO (fill after /plan)
+TODO (fill after the plan is approved)
 
 ## COMMANDS
 - install: TODO

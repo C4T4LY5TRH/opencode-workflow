@@ -15,9 +15,10 @@
   (subpath (string-append (param "HOME") "/.cache"))
   (subpath (string-append (param "HOME") "/Library/Caches")))
 
-; never writable, anywhere: harness state (the human's plan approval), and git hooks/config,
-; which would run code later OUTSIDE the sandbox when the human uses git
-(deny file-write* (regex #"/\.harness(/|$)") (regex #"/\.git/hooks(/|$)") (regex #"/\.git/config$"))
+; never writable, anywhere: harness state (the human's plan approval), and anything under a .git path
+; component (a .git dir or gitfile, its config, hooks, commondir, or .git itself renamed away): git config runs
+; code later OUTSIDE the sandbox (core.fsmonitor, hooks) when the harness or the human runs git. The human commits.
+(deny file-write* (regex #"/\.harness(/|$)") (regex #"/\.git(/|$)"))
 
 ; secrets: .env files (not .env.example), keys, credential stores, opencode's own auth + sessions
 (deny file-read*
@@ -29,3 +30,16 @@
   (subpath (string-append (param "HOME") "/.local/share/opencode"))
   (literal (string-append (param "HOME") "/.netrc")))
 (allow file-read* (regex #"/\.env\.example$"))
+
+; push/publish credentials (R17): the policies against git push / publish are only a speed bump, the sandbox is
+; the control. Registry and forge tokens are unreadable, the macOS keychain git helper cannot run (blocked by
+; name only: a renamed copy in the project still runs), and the launchd ssh-agent socket cannot be reached
+; (agent-shell also unsets SSH_AUTH_SOCK).
+(deny file-read*
+  (literal (string-append (param "HOME") "/.npmrc"))
+  (literal (string-append (param "HOME") "/.pypirc"))
+  (literal (string-append (param "HOME") "/.yarnrc.yml"))
+  (literal (string-append (param "HOME") "/.git-credentials"))
+  (literal (string-append (param "HOME") "/.config/git/credentials")))
+(deny process-exec (regex #"/git-credential-osxkeychain$"))
+(deny network-outbound (remote unix-socket (path-regex #"^/private/tmp/com\.apple\.launchd\.[^/]+/Listeners$")))

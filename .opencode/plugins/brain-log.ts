@@ -10,7 +10,7 @@
  * 3. Counts rule usage into .harness/rule-usage.json so decay ("unused for 3
  *    projects", rule 040) becomes measurable: a rule is "used" when an agent reads
  *    its file (read tool or a shell command naming it); each mini project is
- *    stamped when a tool call first touches it. scripts/rule-report.py (/evolve)
+ *    stamped when a tool call first touches it. scripts/rule-report.py (/status brain)
  *    turns this into keep / DECAY per rule.
  *
  * Paths resolve from THIS file's location, never from ~/.config/opencode.
@@ -57,7 +57,7 @@ const POINTER = [
   "## BRAIN ACTIVE",
   `Rules live in ${RULES}. Load with the \`brain\` skill when a rule matters.`,
   "Core rules (always): verify before claim - no scope creep - ask when unsure - small diff - cite sources.",
-  "Gates: plan -> build -> review + blind -> ship (human confirms).",
+  "Gates: approved plan -> steps with passing checks -> fresh SHIP review -> ship (human commits).",
 ].join("\n")
 
 function brainRuleIndex(): string {

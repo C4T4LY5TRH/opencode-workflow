@@ -3,6 +3,9 @@ dist/
 build/
 .next/
 .cache/
+__pycache__/
+.pytest_cache/
+coverage/
 *.log
 .env
 .env.*

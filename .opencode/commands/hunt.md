@@ -5,9 +5,9 @@ agent: orchestrator
 Project: $1   Focus (optional): $2
 If no project slug is given: ask the human for one. Stop. Otherwise start with step 1 at once; do not inspect the project yourself.
 
-1. **Hunter** — use the subagent tool to launch `bug-hunter` with only this target text: "mini-projects/$1: its uncommitted
+1. **Hunter** — use the subagent tool to launch `hunter` with only this target text: "mini-projects/$1: its uncommitted
    changes (run git with workdir mini-projects/$1); if there are none, the whole project. Focus: $2". Do not suggest where bugs might be.
-2. **Skeptic** — when the hunter finishes, launch `bug-skeptic` with the hunter's full BUG-* blocks (not the leads). Add no commentary of your own.
+2. **Skeptic** — when the hunter finishes, launch `skeptic` with the hunter's full BUG-* blocks (not the leads). Add no commentary of your own.
 3. **Referee** — apply these rules mechanically. Do not re-argue any verdict:
    - CONFIRMED + hunter confidence HIGH + skeptic `Severity: unchanged` → **Verified bugs**
    - CONFIRMED with confidence MEDIUM, or with a changed or missing skeptic severity line, or UNPROVEN →

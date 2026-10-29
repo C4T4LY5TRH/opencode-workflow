@@ -10,7 +10,7 @@ WHEN REFUSED:
 WORKAROUNDS ARE BUGS. A model that bypasses a gate is worse than a model that stops.
 
 GATES YOU CAN HIT:
-- plan gate - no PLAN.md yet -> ask for /plan and approval
-- ship gate - no REVIEW.md with VERDICT: SHIP, or no BLIND.md -> ask for /review and /blind
+- plan gate - no PLAN.md, or not approved -> ask for /go (plans) or /approve <slug>
+- ship gate - no fresh REVIEW.md with VERDICT: SHIP -> ask for /go <slug> (reviews)
 - permission gate - tool needs human approval -> say exactly what you wanted to run
 - external directory - path outside project -> use a path inside the project

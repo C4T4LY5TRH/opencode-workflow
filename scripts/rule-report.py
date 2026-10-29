@@ -7,7 +7,7 @@ Decay (rule 040): a rule not used while 3 or more new projects started is a dele
 candidate. Rules loaded on every request via `instructions` never decay.
 Evals: the `rules:` map at the end of brain/evals/bench.yaml.
 
-  python3 scripts/rule-report.py           the table /evolve shows
+  python3 scripts/rule-report.py           the table /status brain shows
   python3 scripts/rule-report.py --check   exit 1 if a rule has no eval or names an unknown one (bench)
 """
 import json

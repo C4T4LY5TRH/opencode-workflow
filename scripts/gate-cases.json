@@ -4,14 +4,12 @@
     "mini-projects/bare/BRIEF.md",
     "mini-projects/bare/src/.keep",
     "mini-projects/good/PLAN.md",
-    "mini-projects/good/BLIND.md",
     "mini-projects/good/src/.keep",
     "mini-projects/noreview/PLAN.md",
     "mini-projects/noreview/src/.keep",
     "mini-projects/good/REVIEW.md",
     "mini-projects/rework/PLAN.md",
     "mini-projects/rework/REVIEW.md",
-    "mini-projects/rework/BLIND.md",
     "mini-projects/rework/src/.keep",
     "mini-projects/unapproved/PLAN.md",
     "mini-projects/unapproved/src/.keep",
@@ -21,7 +19,20 @@
     "home/.ssh/id_test",
     "mini-projects/good/.env",
     "mini-projects/good/.env.example",
-    "mini-projects/good/.git/hooks/.keep"
+    "mini-projects/good/.git/hooks/.keep",
+    "mini-projects/links/PLAN.md",
+    "mini-projects/links/src/.keep",
+    "ws2/mini-projects/.keep",
+    "ws2/.opencode/.keep",
+    "ws3/mini-projects/.keep",
+    "ws4/mini-projects/.keep",
+    "ws4/RESEARCH/.keep",
+    "home/.npmrc",
+    "home/.pypirc",
+    "home/.yarnrc.yml",
+    "home/.git-credentials",
+    "home/.config/git/credentials",
+    "home/.gitconfig"
   ],
   "cases": [
     {
@@ -102,7 +113,7 @@
         "command": "git commit -m x"
       },
       "expect": "allow",
-      "note": "commit allowed when REVIEW.md + BLIND.md exist"
+      "note": "commit allowed when a fresh SHIP review is recorded"
     },
     {
       "id": "n1",
@@ -284,6 +295,75 @@
       "note": "ship gate: verdict REWORK blocked"
     },
     {
+      "id": "s10",
+      "session": "",
+      "tool": "shell",
+      "input": {
+        "command": "git commit -m x",
+        "workdir": "mini-projects/good"
+      },
+      "expect": "allow",
+      "note": "ship gate: workshop-root session, workdir = project with a fresh SHIP -> allowed (live run 2026-10-25)"
+    },
+    {
+      "id": "s11",
+      "session": "",
+      "tool": "shell",
+      "input": {
+        "command": "git commit -m x",
+        "workdir": "mini-projects/noreview"
+      },
+      "expect": "block",
+      "message_has": "REVIEW.md missing",
+      "note": "ship gate: workshop-root session, workdir = project without REVIEW.md"
+    },
+    {
+      "id": "s12",
+      "session": "",
+      "tool": "shell",
+      "input": {
+        "command": "git commit -m x"
+      },
+      "expect": "block",
+      "message_has": "runs outside a mini project",
+      "note": "ship gate: workshop-root session, no project workdir -> blocked, says to use the project workdir"
+    },
+    {
+      "id": "s13",
+      "session": "mini-projects/good",
+      "tool": "shell",
+      "input": {
+        "command": "git commit -m x",
+        "workdir": "$ROOT/mini-projects/rework"
+      },
+      "expect": "block",
+      "message_has": "not SHIP",
+      "note": "ship gate: keyed on the workdir's project (rework), not the session's fresh SHIP (good)"
+    },
+    {
+      "id": "s14",
+      "session": "",
+      "tool": "shell",
+      "input": {
+        "command": "git commit -m x",
+        "workdir": "mini-projects/good/src"
+      },
+      "expect": "allow",
+      "note": "ship gate: workdir in a project subdirectory -> that project's review"
+    },
+    {
+      "id": "s15",
+      "session": "mini-projects/good",
+      "tool": "shell",
+      "input": {
+        "command": "git commit -m x",
+        "workdir": "$ROOT"
+      },
+      "expect": "block",
+      "message_has": "runs outside a mini project",
+      "note": "ship gate: project session (fresh SHIP), workdir at the workshop root -> refused, no session fallback (R20)"
+    },
+    {
       "id": "a1",
       "session": "mini-projects/unapproved",
       "tool": "write",
@@ -387,11 +467,487 @@
       },
       "expect": "allow",
       "note": "BUGHUNT.md (the /hunt report) is a doc, not code: no plan needed"
+    },
+    {
+      "id": "a1",
+      "session": ".",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/stepa/../unapproved/src/x.js"
+      },
+      "expect": "block",
+      "note": "plan gate: a/../b target is gated on b (unapproved), not on a"
+    },
+    {
+      "id": "w1",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/.opencode/opencode.json",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "confinement: a workshop-root session cannot write the harness config"
+    },
+    {
+      "id": "w2",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/scripts/x.py",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "confinement: a workshop-root session cannot write scripts/"
+    },
+    {
+      "id": "w3",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/brain/rules/x.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "confinement: a workshop-root session cannot write brain/rules/"
+    },
+    {
+      "id": "w4",
+      "session": "",
+      "tool": "edit",
+      "input": {
+        "path": ".opencode/plugins/safety-gate.ts",
+        "oldString": "a",
+        "newString": "b"
+      },
+      "expect": "block",
+      "note": "confinement: relative path from the root to the plugin"
+    },
+    {
+      "id": "w5",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/good/src/app.js",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "root session: code write in an approved project still allowed"
+    },
+    {
+      "id": "w6",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/src/app.js",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "root session: code write still plan-gated (no PLAN.md)"
+    },
+    {
+      "id": "w7",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/brain/proposals/x.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "root session: brain/proposals/ is writable (agent permissions decide who)"
+    },
+    {
+      "id": "w8",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/_template/NOTES.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "confinement: the template is not a project (a doc file, so the plan gate does not decide it)"
+    },
+    {
+      "id": "w9",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nosuch/NOTES.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "confinement: not an existing project (a doc file, so the plan gate does not decide it)"
+    },
+    {
+      "id": "w10",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/README.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "confinement: mini-projects/ itself is not a project"
+    },
+    {
+      "id": "w11",
+      "session": "mini-projects/good",
+      "tool": "write",
+      "input": {
+        "path": "/tmp/x.txt",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "confinement: the write tools never write temp dirs"
+    },
+    {
+      "id": "w12",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/RESEARCH/x.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "R15: the workshop-root RESEARCH/ folder is writable (/research without a project)"
+    },
+    {
+      "id": "w13",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/RESEARCHX/x.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "R15: only the exact name RESEARCH/ at the workshop root"
+    },
+    {
+      "id": "w14",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/RESEARCH/../.opencode/x.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "R15: RESEARCH/.. does not escape to the harness files"
+    },
+    {
+      "id": "w15",
+      "session": "mini-projects/good",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/RESEARCH/x.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "R15: a session inside a project still stays in that project"
+    },
+    {
+      "id": "l0",
+      "session": "mini-projects/links",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/links/src/a.js",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "symlink control: a plain path in the approved links project is allowed"
+    },
+    {
+      "id": "l1",
+      "session": "mini-projects/links",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/links/x.json",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "symlink: target is a link to .harness/state.json"
+    },
+    {
+      "id": "l2",
+      "session": "mini-projects/links",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/links/hdir/state.json",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "symlink: parent dir is a link to .harness"
+    },
+    {
+      "id": "l3",
+      "session": "mini-projects/links",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/links/out/.zshrc",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "symlink: parent dir is a link out of the project"
+    },
+    {
+      "id": "l4",
+      "session": "mini-projects/links",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/links/src2/a.js",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "symlink: any symlinked parent, even one pointing inside the project"
+    },
+    {
+      "id": "l5",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/links/ws/.opencode/opencode.json",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "symlink: a link back to the workshop root"
+    },
+    {
+      "id": "l6",
+      "session": "mini-projects/links",
+      "tool": "patch",
+      "input": {
+        "patchText": "*** Begin Patch\n*** Add File: x.json\n+{}\n*** End Patch"
+      },
+      "expect": "block",
+      "note": "symlink: patch blob path through the link"
+    },
+    {
+      "id": "l7",
+      "session": "mini-projects/good",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/good/.HARNESS/state.json",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "case alias: .HARNESS is .harness on macOS"
+    },
+    {
+      "id": "l8",
+      "session": "mini-projects/good",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/good/review.md",
+        "content": "VERDICT: SHIP\n"
+      },
+      "expect": "block",
+      "note": "case alias: review.md would overwrite REVIEW.md past the case-sensitive REVIEW.md permission deny"
+    },
+    {
+      "id": "u1",
+      "session": "mini-projects/good",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT_CASE/mini-projects/good/src/app.js",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "honest path, other case spelling of the workshop (nested session)"
+    },
+    {
+      "id": "u2",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT_CASE/mini-projects/good/src/app.js",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "honest path, other case spelling of the workshop (root session)"
+    },
+    {
+      "id": "u3",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT_CASE/mini-projects/bare/src/app.js",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "other case spelling is still plan-gated"
+    },
+    {
+      "id": "u4",
+      "session": "",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT_CASE/.opencode/opencode.json",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "other case spelling is still confined"
+    },
+    {
+      "id": "p8",
+      "session": "mini-projects/bare",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/CRITIQUE.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "v3: CRITIQUE.md (the /critique report) is a doc, not code: no plan needed (the critic writes it before /approve)"
+    },
+    {
+      "id": "p9",
+      "session": "mini-projects/bare",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/SCOPE.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "v3: SCOPE.md is gone from the doc list (scope is a PLAN.md section): now an ordinary code write, plan-gated"
+    },
+    {
+      "id": "p10",
+      "session": "mini-projects/bare",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/BLIND.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "v3: BLIND.md is gone from the doc list (blind spots live in REVIEW.md)"
+    },
+    {
+      "id": "c1",
+      "session": "mini-projects/stepa",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/stepa/review.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "R-alias: review.md (no REVIEW.md yet) would pre-empt the reviewer's REVIEW.md on a case-insensitive disk",
+      "message_has": "different-case spelling"
+    },
+    {
+      "id": "c2",
+      "session": "mini-projects/stepa",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/stepa/Plan.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "R-alias: Plan.md is not PLAN.md"
+    },
+    {
+      "id": "c3",
+      "session": "mini-projects/stepa",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/stepa/critique.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "R-alias: critique.md is not CRITIQUE.md",
+      "message_has": "different-case spelling"
+    },
+    {
+      "id": "c4",
+      "session": "mini-projects/stepa",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/stepa/Bughunt.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "R-alias: Bughunt.md is not BUGHUNT.md",
+      "message_has": "different-case spelling"
+    },
+    {
+      "id": "c5",
+      "session": "mini-projects/stepa",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/stepa/REVIEW.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "the exact spelling is still writable (the reviewer's REVIEW.md)"
+    },
+    {
+      "id": "c6",
+      "session": "mini-projects/stepa",
+      "tool": "shell",
+      "input": {
+        "command": "echo x > review.md"
+      },
+      "expect": "block",
+      "note": "R-alias: shell redirect to review.md is refused too",
+      "message_has": "different-case spelling"
+    },
+    {
+      "id": "c7",
+      "session": "mini-projects/stepa",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/stepa/src/review.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "R-alias applies to the project root only: a code file named review.md in a subfolder is fine"
+    },
+    {
+      "id": "c8",
+      "session": "mini-projects/stepa",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/stepa/CRITIQUE.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "exact CRITIQUE.md is writable"
+    },
+    {
+      "id": "rl1",
+      "session": "ws2",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/ws2/RESEARCH/x.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "R-research-link: RESEARCH/ is a symlink to .opencode inside the workshop -> refused"
+    },
+    {
+      "id": "rl2",
+      "session": "ws3",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/ws3/RESEARCH/x.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "R-research-link: RESEARCH/ is a symlink to a folder outside the workshop -> refused"
+    },
+    {
+      "id": "rl3",
+      "session": "ws4",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/ws4/RESEARCH/x.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "control: a real RESEARCH/ folder in a workshop is writable"
     }
   ],
   "approve": [
     "mini-projects/good",
-    "mini-projects/stale"
+    "mini-projects/stale",
+    "mini-projects/links"
   ],
   "edit_after_approve": [
     "mini-projects/stale"
@@ -491,8 +1047,8 @@
       "session": "",
       "agent": true,
       "command": "echo x > mini-projects/bare/w.txt",
-      "expect": "allow",
-      "note": "sandbox: workshop-root session may write under mini-projects/"
+      "expect": "block",
+      "note": "sandbox I1: workshop-root session, no project workdir: read-only, cannot write a project"
     },
     {
       "id": "x13",
@@ -501,6 +1057,224 @@
       "command": "echo x > AGENTS.md",
       "expect": "block",
       "note": "sandbox: ...but never the harness itself"
+    },
+    {
+      "id": "x14",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "cat \"$HOME/.npmrc\"",
+      "expect": "block",
+      "note": "sandbox R17: ~/.npmrc (npm publish token) is unreadable"
+    },
+    {
+      "id": "x15",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "cat \"$HOME/.pypirc\"",
+      "expect": "block",
+      "note": "sandbox R17: ~/.pypirc (twine upload token) is unreadable"
+    },
+    {
+      "id": "x16",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "cat \"$HOME/.yarnrc.yml\"",
+      "expect": "block",
+      "note": "sandbox R17: ~/.yarnrc.yml is unreadable"
+    },
+    {
+      "id": "x17",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "cat \"$HOME/.git-credentials\"",
+      "expect": "block",
+      "note": "sandbox R17: ~/.git-credentials is unreadable"
+    },
+    {
+      "id": "x18",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "cat \"$HOME/.config/git/credentials\"",
+      "expect": "block",
+      "note": "sandbox R17: ~/.config/git/credentials is unreadable"
+    },
+    {
+      "id": "x19",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "cat \"$HOME/.gitconfig\"",
+      "expect": "allow",
+      "note": "sandbox R17 control: other home dotfiles stay readable"
+    },
+    {
+      "id": "x20",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "\"$HOME/bin/git-credential-osxkeychain\" get",
+      "expect": "block",
+      "note": "sandbox R17: the keychain git helper cannot be executed (blocked by name only; a renamed copy still runs)"
+    },
+    {
+      "id": "x21",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "\"$HOME/bin/git-credential-other\" get",
+      "expect": "allow",
+      "note": "sandbox R17 control: another helper with the same body runs"
+    },
+    {
+      "id": "x22",
+      "session": "mini-projects/good",
+      "agent": false,
+      "command": "\"$HOME/bin/git-credential-osxkeychain\" get",
+      "expect": "allow",
+      "note": "sandbox R17 control: your own TUI !cmd (not an agent shell) can still run the helper"
+    },
+    {
+      "id": "x23",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "python3 -c \"import socket,sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])\" $SOCK_AGENT",
+      "expect": "block",
+      "note": "sandbox R17: the launchd ssh-agent socket (com.apple.launchd.*/Listeners) cannot be reached"
+    },
+    {
+      "id": "x24",
+      "session": "mini-projects/good",
+      "agent": true,
+      "command": "python3 -c \"import socket,sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])\" $SOCK_OTHER",
+      "expect": "allow",
+      "note": "sandbox R17 control: a listening unix socket elsewhere can be reached (so x23 fails for the right reason)"
+    },
+    {
+      "id": "x25",
+      "session": "mini-projects/good",
+      "agent": false,
+      "command": "python3 -c \"import socket,sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])\" $SOCK_AGENT",
+      "expect": "allow",
+      "note": "sandbox R17 control: your own TUI !cmd can reach it"
+    },
+    {
+      "id": "x26",
+      "session": "mini-projects/gitmv",
+      "agent": true,
+      "command": "mv .git g2",
+      "expect": "block",
+      "note": "sandbox C1: .git itself cannot be renamed away (then edited and renamed back)"
+    },
+    {
+      "id": "x27",
+      "session": "mini-projects/gitcd",
+      "agent": true,
+      "command": "echo ../evil > .git/commondir",
+      "expect": "block",
+      "note": "sandbox C1: .git/commondir cannot point git at another config"
+    },
+    {
+      "id": "x28",
+      "session": "mini-projects/gitcfg",
+      "agent": true,
+      "command": "echo x >> .git/config",
+      "expect": "block",
+      "note": "sandbox C1: .git/config is never writable"
+    },
+    {
+      "id": "x29",
+      "session": "mini-projects/gitp",
+      "agent": true,
+      "command": "mkdir -p sub && printf 'gitdir: x' > sub/.git",
+      "expect": "block",
+      "note": "sandbox C1: no new .git (gitfile) anywhere in the project"
+    },
+    {
+      "id": "x30",
+      "session": "mini-projects/gitp",
+      "agent": true,
+      "command": "git add a.txt",
+      "expect": "block",
+      "note": "sandbox C1: agents cannot write the index, so no git add/commit: the human commits"
+    },
+    {
+      "id": "x31",
+      "session": "mini-projects/gitp",
+      "agent": true,
+      "command": "git status",
+      "expect": "allow",
+      "note": "sandbox C1 control: git status still prints (it cannot refresh the index; that is fine)"
+    },
+    {
+      "id": "x32",
+      "session": "mini-projects/gitp",
+      "agent": true,
+      "command": "git diff",
+      "expect": "allow",
+      "note": "sandbox C1 control: git diff still works"
+    },
+    {
+      "id": "x33",
+      "session": "mini-projects/gitp",
+      "agent": true,
+      "command": "git log --oneline",
+      "expect": "allow",
+      "note": "sandbox C1 control: git log still works"
+    },
+    {
+      "id": "x34",
+      "session": "mini-projects/gitp",
+      "agent": true,
+      "command": "git branch -a",
+      "expect": "allow",
+      "note": "sandbox C1 control: git branch -a still works"
+    },
+    {
+      "id": "x35",
+      "session": "mini-projects/gitp",
+      "agent": true,
+      "command": "echo x > .gitignore && mkdir -p .github && echo x > .github/ci.yml",
+      "expect": "allow",
+      "note": "sandbox C1 control: .gitignore and .github/ are not .git"
+    },
+    {
+      "id": "x36",
+      "session": "",
+      "agent": true,
+      "command": "echo x > mini-projects/_template/x.txt",
+      "expect": "block",
+      "note": "sandbox I1: workshop-root session, no project workdir: cannot write _template"
+    },
+    {
+      "id": "x37",
+      "session": "",
+      "cwd": "mini-projects/good",
+      "agent": true,
+      "command": "echo x > notes2.txt",
+      "expect": "allow",
+      "note": "sandbox I1 control: workshop-root session, workdir in a project: writes there"
+    },
+    {
+      "id": "x38",
+      "session": "",
+      "cwd": "mini-projects/_template",
+      "agent": true,
+      "command": "echo x > y.txt",
+      "expect": "block",
+      "note": "sandbox I1: workdir _template is not a project: read-only"
+    },
+    {
+      "id": "x39",
+      "session": "",
+      "agent": true,
+      "command": "ls mini-projects",
+      "expect": "allow",
+      "note": "sandbox I1 control: the read-only shell still runs (reads work)"
+    },
+    {
+      "id": "x40",
+      "session": "",
+      "agent": true,
+      "command": "f=$(mktemp) && echo x > \"$f\" && rm \"$f\"",
+      "expect": "allow",
+      "note": "sandbox I1 control: the read-only shell may still write temp dirs"
     }
   ],
   "telemetry": {
@@ -595,5 +1369,693 @@
       "000-core.md",
       "030-research.md"
     ]
-  }
+  },
+  "steps": {
+    "projects": [
+      "stepa",
+      "stepb",
+      "stepc",
+      "stepd",
+      "stepe",
+      "stepf",
+      "stepg",
+      "stepr"
+    ],
+    "ops": [
+      {
+        "id": "k1",
+        "note": "step check, exit 0 -> step 1 done_at set",
+        "session": "mini-projects/stepa",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\""
+        },
+        "result": {
+          "exit": 0,
+          "output": "ok\n"
+        },
+        "expect": {
+          "steps": [
+            [
+              true,
+              0
+            ],
+            [
+              false,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "id": "k2",
+        "note": "step 2 check, exit 1, 60 lines -> attempts 1, last 40 lines kept",
+        "session": "mini-projects/stepa",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(1)\""
+        },
+        "result": {
+          "exit": 1,
+          "lines": 60
+        },
+        "expect": {
+          "steps": [
+            [
+              true,
+              0
+            ],
+            [
+              false,
+              1
+            ]
+          ],
+          "last_failure": {
+            "step": 1,
+            "from": 21,
+            "to": 60
+          }
+        }
+      },
+      {
+        "id": "k3",
+        "note": "extra internal/trailing spaces still match",
+        "session": "mini-projects/stepb",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "  node   -e   \"process.exit(0)\"  "
+        },
+        "result": {
+          "exit": 0,
+          "output": ""
+        },
+        "expect": {
+          "steps": [
+            [
+              true,
+              0
+            ],
+            [
+              false,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "id": "k4",
+        "note": "cd mini-projects/x && <check> is ignored",
+        "session": "mini-projects/stepc",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "cd mini-projects/x && node -e \"process.exit(0)\""
+        },
+        "result": {
+          "exit": 0,
+          "output": ""
+        },
+        "expect": {
+          "unchanged": [
+            "stepc"
+          ]
+        }
+      },
+      {
+        "id": "k4b",
+        "note": "check from the workshop root with no workdir is ignored",
+        "session": ".",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\""
+        },
+        "result": {
+          "exit": 0,
+          "output": ""
+        },
+        "expect": {
+          "unchanged": [
+            "stepc",
+            "stepa"
+          ]
+        }
+      },
+      {
+        "id": "k5a",
+        "note": "check fails first",
+        "session": "mini-projects/stepd",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\""
+        },
+        "result": {
+          "exit": 1,
+          "lines": 3
+        },
+        "expect": {
+          "steps": [
+            [
+              false,
+              1
+            ],
+            [
+              false,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "id": "k5b",
+        "note": "same check passes in the same project -> done, attempts stays 1",
+        "session": "mini-projects/stepd",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\""
+        },
+        "result": {
+          "exit": 0,
+          "output": ""
+        },
+        "expect": {
+          "steps": [
+            [
+              true,
+              1
+            ],
+            [
+              false,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "id": "k6",
+        "note": "check from project B's session leaves project A unchanged",
+        "session": "mini-projects/stepf",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\""
+        },
+        "result": {
+          "exit": 0,
+          "output": ""
+        },
+        "expect": {
+          "steps": [
+            [
+              true,
+              0
+            ],
+            [
+              false,
+              0
+            ]
+          ],
+          "unchanged": [
+            "stepe"
+          ]
+        }
+      },
+      {
+        "id": "k6b",
+        "note": "check with workdir = project B from the root session -> only B changes",
+        "session": ".",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\"",
+          "workdir": "mini-projects/stepg"
+        },
+        "result": {
+          "exit": 0,
+          "output": ""
+        },
+        "expect": {
+          "project": "stepg",
+          "steps": [
+            [
+              true,
+              0
+            ],
+            [
+              false,
+              0
+            ]
+          ],
+          "unchanged": [
+            "stepe"
+          ]
+        }
+      },
+      {
+        "id": "k9",
+        "note": "check run in the background (status running) is ignored",
+        "session": "mini-projects/stepe",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\""
+        },
+        "result": {
+          "status": "running",
+          "output": "moved to background"
+        },
+        "expect": {
+          "unchanged": [
+            "stepe"
+          ]
+        }
+      },
+      {
+        "id": "k10",
+        "note": "a command that is not the current check is ignored",
+        "session": "mini-projects/stepe",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(1)\""
+        },
+        "result": {
+          "exit": 1,
+          "output": "x\n"
+        },
+        "expect": {
+          "unchanged": [
+            "stepe"
+          ]
+        }
+      },
+      {
+        "id": "k11",
+        "note": "timeout counts as a failure",
+        "session": "mini-projects/stepe",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\""
+        },
+        "result": {
+          "timeout": true,
+          "output": "slow\n"
+        },
+        "expect": {
+          "steps": [
+            [
+              false,
+              1
+            ],
+            [
+              false,
+              0
+            ]
+          ],
+          "last_failure": {
+            "step": 0,
+            "contains": "slow"
+          }
+        }
+      },
+      {
+        "id": "k12",
+        "note": "no exit code (signal kill) counts as a failure",
+        "session": "mini-projects/stepe",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\""
+        },
+        "result": {
+          "output": "killed\n"
+        },
+        "expect": {
+          "steps": [
+            [
+              false,
+              2
+            ],
+            [
+              false,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "id": "k13",
+        "note": "tool status error counts as a failure and keeps the message",
+        "session": "mini-projects/stepe",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\""
+        },
+        "status": "error",
+        "error": "Unable to execute command",
+        "expect": {
+          "steps": [
+            [
+              false,
+              3
+            ],
+            [
+              false,
+              0
+            ]
+          ],
+          "last_failure": {
+            "step": 0,
+            "contains": "Unable to execute"
+          }
+        }
+      },
+      {
+        "id": "k15a",
+        "note": "absolute workdir A/../B: A's check run stub is not recorded for A (or B)",
+        "session": ".",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(1)\"",
+          "workdir": "$ROOT/mini-projects/stepa/../stepc"
+        },
+        "result": {
+          "exit": 0,
+          "output": ""
+        },
+        "expect": {
+          "unchanged": [
+            "stepa",
+            "stepc"
+          ]
+        }
+      },
+      {
+        "id": "k15b",
+        "note": "absolute workdir A/../B resolves to B: only B is recorded",
+        "session": ".",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(0)\"",
+          "workdir": "$ROOT/mini-projects/stepa/../stepc"
+        },
+        "result": {
+          "exit": 0,
+          "output": ""
+        },
+        "expect": {
+          "project": "stepc",
+          "steps": [
+            [
+              true,
+              0
+            ],
+            [
+              false,
+              0
+            ]
+          ],
+          "unchanged": [
+            "stepa"
+          ]
+        }
+      },
+      {
+        "id": "k15c",
+        "note": "workdir in a subdirectory of the project is ignored",
+        "session": ".",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(1)\"",
+          "workdir": "mini-projects/stepb/src"
+        },
+        "result": {
+          "exit": 0,
+          "output": ""
+        },
+        "expect": {
+          "unchanged": [
+            "stepb"
+          ]
+        }
+      },
+      {
+        "id": "k15d",
+        "note": "session in A with workdir = B: B's state is the one considered",
+        "session": "mini-projects/stepa",
+        "hook": "after",
+        "tool": "shell",
+        "input": {
+          "command": "node -e \"process.exit(1)\"",
+          "workdir": "$ROOT/mini-projects/stepg"
+        },
+        "result": {
+          "exit": 0,
+          "output": ""
+        },
+        "expect": {
+          "project": "stepg",
+          "steps": [
+            [
+              true,
+              0
+            ],
+            [
+              true,
+              0
+            ]
+          ],
+          "unchanged": [
+            "stepa"
+          ]
+        }
+      },
+      {
+        "id": "k7",
+        "note": "write REVIEW.md with VERDICT: SHIP -> review recorded with the tree hash",
+        "session": "mini-projects/stepr",
+        "hook": "after",
+        "tool": "write",
+        "input": {
+          "path": "$ROOT/mini-projects/stepr/REVIEW.md"
+        },
+        "expect": {
+          "review": "SHIP"
+        }
+      },
+      {
+        "id": "k8a",
+        "note": "ship gate: fresh SHIP review -> commit allowed",
+        "session": "mini-projects/stepr",
+        "hook": "before",
+        "tool": "shell",
+        "input": {
+          "command": "git commit -m x"
+        },
+        "expect": {
+          "gate": "allow"
+        }
+      },
+      {
+        "id": "k8b",
+        "note": "ship gate: code changed after the review -> commit blocked as stale",
+        "session": "mini-projects/stepr",
+        "hook": "before",
+        "tool": "shell",
+        "input": {
+          "command": "git commit -m x"
+        },
+        "file": {
+          "path": "mini-projects/stepr/src/a.js",
+          "body": "two\n"
+        },
+        "expect": {
+          "gate": "block",
+          "message_has": "review is stale: code changed since REVIEW.md; run /go stepr to review again"
+        }
+      },
+      {
+        "id": "k8c",
+        "note": "REVIEW.md written again after the change -> review re-recorded",
+        "session": "mini-projects/stepr",
+        "hook": "after",
+        "tool": "write",
+        "input": {
+          "path": "$ROOT/mini-projects/stepr/REVIEW.md"
+        },
+        "file": {
+          "path": "mini-projects/stepr/REVIEW.md",
+          "body": "## VERDICT: SHIP\nre-checked\n"
+        },
+        "expect": {
+          "review": "SHIP"
+        }
+      },
+      {
+        "id": "k8d",
+        "note": "ship gate: new review is fresh -> commit allowed (also git tag)",
+        "session": "mini-projects/stepr",
+        "hook": "before",
+        "tool": "shell",
+        "input": {
+          "command": "git tag v1"
+        },
+        "expect": {
+          "gate": "allow"
+        }
+      },
+      {
+        "id": "k16",
+        "note": "ship gate: SHIP recorded, REVIEW.md then edited to FIX FIRST without the hook -> commit blocked",
+        "session": "mini-projects/stepr",
+        "hook": "before",
+        "tool": "shell",
+        "input": {
+          "command": "git commit -m x"
+        },
+        "file": {
+          "path": "mini-projects/stepr/REVIEW.md",
+          "body": "## VERDICT: FIX FIRST\n"
+        },
+        "expect": {
+          "gate": "block",
+          "message_has": "not SHIP"
+        }
+      },
+      {
+        "id": "k7b",
+        "note": "REVIEW.md rewritten with no VERDICT line -> review record removed",
+        "session": "mini-projects/stepr",
+        "hook": "after",
+        "tool": "write",
+        "input": {
+          "path": "$ROOT/mini-projects/stepr/REVIEW.md"
+        },
+        "file": {
+          "path": "mini-projects/stepr/REVIEW.md",
+          "body": "looks fine\n"
+        },
+        "expect": {
+          "review": "none"
+        }
+      },
+      {
+        "id": "k7c",
+        "note": "ship gate: no verdict -> commit blocked",
+        "session": "mini-projects/stepr",
+        "hook": "before",
+        "tool": "shell",
+        "input": {
+          "command": "git commit -m x"
+        },
+        "expect": {
+          "gate": "block",
+          "message_has": "missing"
+        }
+      },
+      {
+        "id": "k7d",
+        "note": "patch of REVIEW.md records the review too",
+        "session": "mini-projects/stepr",
+        "hook": "after",
+        "tool": "patch",
+        "input": {
+          "patchText": "*** Begin Patch\n*** Update File: $ROOT/mini-projects/stepr/REVIEW.md\n*** End Patch"
+        },
+        "file": {
+          "path": "mini-projects/stepr/REVIEW.md",
+          "body": "## VERDICT: FIX FIRST\n"
+        },
+        "expect": {
+          "review": "FIX FIRST"
+        }
+      },
+      {
+        "id": "k7e",
+        "note": "ship gate: verdict FIX FIRST -> commit blocked as not SHIP",
+        "session": "mini-projects/stepr",
+        "hook": "before",
+        "tool": "shell",
+        "input": {
+          "command": "git commit -m x"
+        },
+        "expect": {
+          "gate": "block",
+          "message_has": "not SHIP"
+        }
+      },
+      {
+        "id": "k7f",
+        "note": "a failed REVIEW.md write is not recorded",
+        "session": "mini-projects/stepr",
+        "hook": "after",
+        "tool": "write",
+        "input": {
+          "path": "$ROOT/mini-projects/stepr/REVIEW.md"
+        },
+        "status": "error",
+        "error": "boom",
+        "file": {
+          "path": "mini-projects/stepr/REVIEW.md",
+          "body": "## VERDICT: SHIP\n"
+        },
+        "expect": {
+          "review": "FIX FIRST"
+        }
+      }
+    ]
+  },
+  "review_after_approve": [
+    "mini-projects/good"
+  ],
+  "symlinks": [
+    {
+      "link": "mini-projects/links/x.json",
+      "to": ".harness/state.json"
+    },
+    {
+      "link": "mini-projects/links/hdir",
+      "to": ".harness"
+    },
+    {
+      "link": "mini-projects/links/out",
+      "to": "../../home"
+    },
+    {
+      "link": "mini-projects/links/src2",
+      "to": "src"
+    },
+    {
+      "link": "mini-projects/links/ws",
+      "to": "../.."
+    },
+    {
+      "link": "ws2/RESEARCH",
+      "to": ".opencode"
+    },
+    {
+      "link": "ws3/RESEARCH",
+      "to": "../home"
+    }
+  ],
+  "executables": [
+    "home/bin/git-credential-osxkeychain",
+    "home/bin/git-credential-other"
+  ],
+  "git_repos": [
+    "mini-projects/gitp",
+    "mini-projects/gitmv",
+    "mini-projects/gitcd",
+    "mini-projects/gitcfg"
+  ]
 }

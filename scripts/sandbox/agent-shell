@@ -4,7 +4,7 @@
 #
 # - Agent shells (opencode sets AGENT=1 on every shell-tool call) run inside agent.sb:
 #   writes only in the project (HARNESS_SANDBOX_ROOT), temp dirs and tool caches; never
-#   .harness/ or .git hooks/config; no reads of .env files, keys or credential stores.
+#   .harness/ or anything under .git (the human commits); no reads of .env files, keys or credential stores.
 #   Secret-looking environment variables are removed first.
 # - Your own `!cmd` in the TUI has no AGENT=1 and runs in your normal shell, unchanged.
 # - Fails closed: if the agent shell cannot be sandboxed, the command does not run.

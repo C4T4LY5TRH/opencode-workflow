@@ -13,7 +13,7 @@ metadata:
 2. Navigate. Wait for content.
 3. Snapshot (text truth) + Screenshot (pixel truth). LOOK at the image.
 4. Check at 2 widths: 1440 and 390.
-5. Report, fix (coder), re-screenshot. Loop until clean.
+5. Report, fix (builder), re-screenshot. Loop until clean.
 
 ## What counts as BROKEN
 - Text overflowing / clipped / overlapping
@@ -28,7 +28,7 @@ metadata:
 
 ## What is NOT broken (do not report as bug)
 - Taste preference with no stated rule
-- Missing feature not in SCOPE/PLAN
+- Missing feature not in PLAN
 
 ## Output (exact)
 ```

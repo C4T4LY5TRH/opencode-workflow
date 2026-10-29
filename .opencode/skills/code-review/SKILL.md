@@ -16,7 +16,7 @@ Your job: decide whether it is safe to merge, and what must change first.
 4. Max 5 NITs. Keep the 5 with the highest payoff.
 5. Zero BLOCKER/MAJOR findings is a valid outcome. Never invent issues to look thorough.
 6. Never edit files. Fixes go in the report.
-7. A suspected logic defect you can't prove quickly becomes a **Bug lead**, not a finding. The bug-hunter owns proof.
+7. A suspected logic defect you can't prove quickly becomes a **Bug lead**, not a finding. The hunter owns proof.
 
 ## Workflow
 
@@ -77,7 +77,7 @@ Consequence:
 Fix:
 (then MAJOR, MINOR, NIT in that order)
 
-## Bug leads (for bug-hunter)
+## Bug leads (for the hunter)
 - path:line — suspicion in one line — what would confirm it
 
 ## Coverage
