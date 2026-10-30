@@ -11,13 +11,17 @@
  *     line is its freshness check), and agent.sb denies every agent write under .git anyway (R25 keeps this)
  *   - recording (execute.after): the current plan step's check result and the REVIEW.md verdict go
  *     into the project's .harness/state.json (spec section 7); this plugin is the only writer
- *   - plan gate: no code write in a mini project unless the human approved its
- *     current PLAN.md (/approve records the plan's sha256 in .harness/state.json;
- *     any later edit to PLAN.md changes the hash and revokes the approval)
+ *   - plan gate: no code write in a mini project unless the human approved its current documents. The state
+ *     library decides (`harness_state.py approved`, spec H1/H24): v4 = one hash over BRIEF + ARCHITECTURE
+ *     (+ DESIGN) + PLAN and the plan's milestone not yet shipped; v3 mode = PLAN.md's hash. Any edit revokes it
  *   - approval is human-only: agents cannot write .harness/ or run approve.sh
  *   - write confinement: no edit/write/patch/shell-redirect outside the project; and, for EVERY session
  *     (workshop root too), the write tools may only write inside an existing mini-projects/<slug>/, brain/proposals/ or
  *     the workshop RESEARCH/, never through a symlink (checked on the real path, not the path text)
+ *   - delegations (spec 7.2 rules 7-8): at most 16 delegation calls per human turn for each calling session
+ *     (circuit breaker), one at a time per session and never in the background, and when a session whose
+ *     delegation completed ends its turn, every mini-projects/<slug>/.harness/lock (the /go chain lock) is deleted.
+ *     Turns come from ctx.event (spec 14 f)
  *   - OS sandbox: every shell runs through scripts/sandbox/agent-shell, which puts
  *     agent shells (AGENT=1) in a macOS sandbox that may write only the project the
  *     command runs in, nothing with no project (shell create.before hook; covers shell only, not edit/write)
@@ -29,9 +33,8 @@
  * ~/.config/opencode or process.cwd().
  */
 
-import { createHash } from "node:crypto"
 import { spawn, spawnSync } from "node:child_process"
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -41,7 +44,7 @@ const WORKSHOP = path.resolve(PLUGIN_DIR, "..", "..")
 const RUNTIME = path.join(WORKSHOP, ".harness")
 const ALIVE_FILE = path.join(RUNTIME, "plugins-alive")
 const SANDBOX_SHELL = path.join(WORKSHOP, "scripts", "sandbox", "agent-shell")
-const STATE_PY = path.join(WORKSHOP, "scripts", "harness_state.py") // read-only verbs only (tree, review)
+const STATE_PY = path.join(WORKSHOP, "scripts", "harness_state.py") // read-only verbs only (approved, review)
 // Dashboard regeneration. A test run (HARNESS_TEST) must never write the real .harness/dashboard.html, so it
 // spawns only the copy of status.py that the test names in HARNESS_TEST_STATUS_PY (and nothing if it names none).
 const STATUS_PY = process.env.HARNESS_TEST
@@ -50,31 +53,32 @@ const STATUS_PY = process.env.HARNESS_TEST
 
 /** Project docs: writing them never counts as "code" for the plan gate. Must agree with DOC_FILES in scripts/harness_state.py. */
 const GATED_FILES = ["PLAN.md", "REVIEW.md", "CRITIQUE.md"]
-const DOC_FILES = [...GATED_FILES, "BUGHUNT.md", "NOTES.md", "LEARNINGS.md", "BRIEF.md", "AGENTS.md", "README.md"]
+const V4_DOCS = ["BRIEF.md", "ARCHITECTURE.md", "BRAINSTORM.md", "DESIGN.md"] // spec H15
+const DOC_FILES = [...GATED_FILES, ...V4_DOCS, "BUGHUNT.md", "NOTES.md", "LEARNINGS.md", "AGENTS.md", "README.md"]
 /** Files only one role may write (the edit denies are case-sensitive, so a different-case spelling is refused). */
-const ALIAS_GUARDED = [...GATED_FILES, "BUGHUNT.md"]
+const ALIAS_GUARDED = [...GATED_FILES, ...V4_DOCS, "BUGHUNT.md"]
 const DOC_DIRS = ["RESEARCH"] // /research runs before a plan exists
 const WRITE_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
 
+/** The tool id of a delegation in execute.before/after (spec 14 fact c; agent permissions still say `task:`). */
+const DELEGATION_TOOL = "subagent"
+/** Delegations one session may make in one human turn (spec 7.2 rule 7, H23). */
+const BREAKER_CAP = 16
+const TURN_START = "session.execution.started"
+const TURN_END = new Set(["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"])
+
 /** Harness state (approval). Only scripts/approve.sh, run by the human's /approve, writes it. */
 const isHarnessState = (absTarget: string) => absTarget.toLowerCase().split(path.sep).includes(".harness")
-const sha256 = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex")
-
-/** Is the project's PLAN.md, as it is now, the one the human approved? */
-function planApproved(proj: string): boolean {
-  try {
-    const state = JSON.parse(readFileSync(path.join(proj, ".harness", "state.json"), "utf8"))
-    return state?.plan_sha256 === sha256(path.join(proj, "PLAN.md"))
-  } catch {
-    return false
-  }
-}
 
 /** Run a read-only harness_state.py verb; its stdout, or null on any failure. */
 function stateCli(verb: string, proj: string, timeout = 20000): string | null {
   const r = spawnSync("python3", [STATE_PY, verb, proj], { encoding: "utf8", timeout })
   return r.status === 0 ? r.stdout.trim() : null
 }
+
+/** Are the project's documents, as they are now, the ones the human approved? The state library answers (H1:
+ *  never re-implemented here); a failed or slow call reads as "no", so the gate fails closed. */
+const planApproved = (proj: string) => stateCli("approved", proj) === "yes"
 
 /** Regenerate .harness/dashboard.html in a detached child: never blocks and never throws into a tool call. */
 function refreshDashboard() {
@@ -243,7 +247,7 @@ export default {
       }
       if (!planApproved(proj)) {
         throw new Error(
-          `SAFETY GATE: plan gate. PLAN.md in ${path.basename(proj)} is not approved, or changed after approval. The human reads PLAN.md and types /approve ${path.basename(proj)}.`,
+          `SAFETY GATE: plan gate. ${path.basename(proj)} has no current approval: it was never approved, a plan document (BRIEF, ARCHITECTURE, DESIGN, PLAN) changed after /approve, or its milestone has shipped. /go ${path.basename(proj)} shows what is next; the human approves with /approve ${path.basename(proj)}.`,
         )
       }
     }
@@ -341,6 +345,102 @@ export default {
       return mini
     }
 
+    // Delegations, per CALLING session (event.sessionID). `turnCalls`: the agents a session asked for in this turn,
+    // in order (the breaker). `running`: its delegation still open (R8: two calls in one model response would
+    // otherwise run at the same time, spec 14 d). `delegated`: sessions whose delegation really ran (an execute.after
+    // with status completed). Only their turn end frees the /go lock: execute.before fires for any tool name a model
+    // emits, so a worker child that TRIES `subagent` reaches checkDelegation too, but with subagent_depth 1 its
+    // call never completes (spec 14 c) — and its own turn end must not free the lock mid-chain (spec 14 f: root only).
+    // The event bus is global, so turn events of sessions not in these maps are ignored.
+    const turnCalls = new Map<string, string[]>()
+    const running = new Map<string, string>()
+    const delegated = new Set<string>()
+
+    const checkDelegation = (event: any) => {
+      const sid = String(event?.sessionID ?? "")
+      const agent = typeof event?.input?.agent === "string" && event.input.agent ? event.input.agent : "unknown"
+      if (event?.input?.background) {
+        // a background call returns at once (its after clears `running`) and its completion wakes the parent in a
+        // new busy period (a fresh count, and a turn end that frees the lock while the child still writes)
+        throw new Error("SAFETY GATE: one delegation at a time. Background delegations are not allowed; call it in the foreground.")
+      }
+      const calls = turnCalls.get(sid) ?? []
+      turnCalls.set(sid, calls)
+      const busy = running.get(sid)
+      if (busy !== undefined) {
+        throw new Error(`SAFETY GATE: one delegation at a time. Wait for the running @${busy} to finish, then call the next one.`)
+      }
+      if (calls.length >= BREAKER_CAP) {
+        const counts = new Map<string, number>()
+        for (const a of calls) counts.set(a, (counts.get(a) ?? 0) + 1)
+        const who = [...counts].map(([a, n]) => `${a}×${n}`).join(", ")
+        throw new Error(
+          `SAFETY GATE: circuit breaker. ${calls.length} delegations in this turn (${who}). Stop and tell the human; their next message resets it.`,
+        )
+      }
+      calls.push(agent)
+      running.set(sid, agent)
+    }
+
+    /** Delete every mini-projects/<slug>/.harness/lock: plain files only, never through a symlinked slug or .harness. */
+    const clearLocks = () => {
+      if (!miniRoot) return
+      let slugs: string[] = []
+      try {
+        slugs = readdirSync(miniRoot)
+      } catch {
+        return
+      }
+      for (const slug of slugs) {
+        try {
+          const dir = path.join(miniRoot, slug)
+          const lock = path.join(dir, ".harness", "lock")
+          if (lstatSync(dir).isDirectory() && lstatSync(path.dirname(lock)).isDirectory() && lstatSync(lock).isFile()) unlinkSync(lock)
+        } catch {
+          // no lock here, or it cannot be removed: next.py's 30-minute expiry is the fallback
+        }
+      }
+    }
+
+    /** A human turn starts or ends (spec 14 f): reset that session's count; at the end also free the /go lock (P7). */
+    const onTurnEvent = (e: any) => {
+      const sid = e?.data?.sessionID
+      if (typeof sid !== "string" || !turnCalls.has(sid)) return
+      if (e.type === TURN_START) {
+        turnCalls.set(sid, [])
+        running.delete(sid)
+      } else if (TURN_END.has(e.type)) {
+        turnCalls.delete(sid)
+        running.delete(sid) // the turn is over, so nothing it started is still running
+        if (delegated.delete(sid)) clearLocks()
+      }
+    }
+
+    // Not awaited: the loop runs for the life of the plugin and never throws into the host. If the stream fails
+    // or ends while the plugin is still loaded, subscribe once more; if that ends too, say so in the heartbeat file.
+    let unloading = false
+    void (async () => {
+      for (let attempt = 0; attempt < 2 && !unloading; attempt++) {
+        try {
+          for await (const e of ctx.event.subscribe()) {
+            try {
+              onTurnEvent(e)
+            } catch {
+              // one bad event never stops the loop
+            }
+          }
+        } catch {
+          // no event stream (or it failed): retried once below
+        }
+      }
+      if (unloading || process.env.HARNESS_TEST) return
+      try {
+        appendFileSync(ALIVE_FILE, `safety-gate event loop stopped ${new Date().toISOString()}: circuit-breaker resets and /go lock clean-up are off until opencode restarts\n`)
+      } catch {
+        // ignore
+      }
+    })()
+
     // OS sandbox. The wrapper sandboxes only agent shells; the writable root is the project the
     // command runs in, else the session's project. No project (or _template): the workshop's .harness/, which
     // agent.sb never lets anyone write, so the shell is read-only (temp dirs and tool caches aside).
@@ -358,7 +458,7 @@ export default {
       }
       let real = ""
       try {
-        real = root ? realpathSync.native(root) : "" // sandbox paths are case-sensitive; macOS dirs may not be
+        real = root ? realpathSync.native(root) : "" // the on-disk spelling: right whether or not the sandbox matches paths without case (this Mac's does, seen 2026-10-29)
       } catch {
         // missing root: the wrapper refuses to run unsandboxed
       }
@@ -370,6 +470,8 @@ export default {
     await ctx.tool.hook("execute.before", async (event: any) => {
       const tool = String(event?.tool ?? "")
       const input = event?.input
+
+      if (tool === DELEGATION_TOOL) return checkDelegation(event)
 
       if (tool === "shell") {
         const cmd = typeof input?.command === "string" ? input.command : ""
@@ -480,6 +582,12 @@ export default {
 
     await ctx.tool.hook("execute.after", async (event: any) => {
       try {
+        if (event?.tool === DELEGATION_TOOL) {
+          const sid = String(event?.sessionID ?? "")
+          running.delete(sid) // any status (R8)
+          if (event?.status === "completed" && turnCalls.has(sid)) delegated.add(sid) // it really delegated
+          return
+        }
         if (event?.tool === "shell") return recordStep(event)
         if (event?.status !== "completed" || !WRITE_TOOLS.has(String(event?.tool))) return
         const input = event.input
@@ -493,5 +601,10 @@ export default {
         // recording never breaks a tool call
       }
     })
+
+    // opencode runs this before it closes the event stream on unload, so a normal unload is not reported as a stop
+    return () => {
+      unloading = true
+    }
   },
 }

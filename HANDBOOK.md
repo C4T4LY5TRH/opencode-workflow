@@ -1,165 +1,110 @@
-# HANDBOOK — the opencode one-person harness (v3)
+# HANDBOOK — the opencode one-person harness (v4, piece 1: the front half)
 
-How it works and how to drive it. Checks: `scripts/bench.sh`, `scripts/gate-test.mjs`, `scripts/state-test.py`.
-Security: `AUDIT.md`, `docs/audit/`. Design: `docs/superpowers/specs/2026-10-25-harness-v3-design.md`. v2.2: branch `harness-v2`; v1: `docs/history/`.
+How it works and how to drive it. Security detail: `AUDIT.md` §8b. Design: `docs/superpowers/specs/2026-10-27-harness-v4-front-half-design.md` (+ `...-roadmap.md`). v3: branch `harness-v3`.
 
 ## 1. What this is
-A project-local opencode harness for one person vibecoding. Verified on opencode **2.1.3**.
-- **One command to remember: `/go <slug>`.** It does the next thing and stops after each step. The routing is
-  code (`scripts/next.py`); the model only carries it out.
-- **A step is done when its check passes** (the plugin sees it run), not when the builder says so.
-- **Gates in code.** Destructive commands, agent commits (you commit; `/ship`'s first status line checks the review is fresh), and code
-  edits without an approved plan are blocked by config, a plugin and an OS sandbox (the plan gate sees the edit tools and simple shell redirects; see §7). Everything lives in `~/Projects/opencode`; outside it, opencode is untouched.
+A project-local opencode harness for one person vibecoding. Built for opencode **2.2.0** (the facts were read in 2.1.3 and diffed unchanged).
+- **Idea to approved plan, with specialists:** a brainstormer writes the brief, an architect the architecture, a planner the plan, a critic
+  attacks it. You approve one set of documents; only then can code be written.
+- **Code decides the routing and the checks** (`scripts/next.py`, `scripts/harness_state.py`); the model only carries out the instruction.
+  A step is done when its check passes (the plugin sees it run), not when the builder says so. Outside this folder opencode is plain.
 
-## 2. The loop
+## 2. The flow
 ```
-/new "a habit tracker"   scaffold the project
-/go habit-tracker        planner writes PLAN.md (scope + steps)  -> stop
-/approve habit-tracker   YOU read PLAN.md and approve it (recorded)
-/go habit-tracker        builder builds step 1, runs its check   -> stop   (one step per /go)
-/go habit-tracker        ... after the last step the reviewer writes REVIEW.md; FIX FIRST -> builder fixes (max 2 rounds)
-/ship habit-tracker      checklist; YOU commit, push and publish; the brain drafts a lesson
+/new "an idea"          scaffold; brainstormer drafts BRIEF.md and asks 3-5 questions   (answer in chat, as many rounds as you like)
+/go <slug>              code locks the brief, then the chain: architect -> ARCHITECTURE.md, planner -> PLAN.md (milestone M1),
+                        critic -> CRITIQUE.md round 1, architect/planner answer it; code prints the APPROVAL DIGEST. Stop.
+/approve <slug>         YOU read the digest and the files; one hash over BRIEF + ARCHITECTURE (+ DESIGN) + PLAN; any edit revokes it
+/critique <slug>        instead: one more critic round, then the digest again
+/go <slug> (x many)     one step per /go: the builder builds it and runs its exact check; at the end the reviewer writes REVIEW.md
+/ship <slug>            checklist; records the milestone shipped; YOU commit; the brain drafts a lesson. Next /go plans the next milestone.
+/brainstorm <slug> [topic]   any time: a topic round in BRAINSTORM.md; `/brainstorm <slug> brief` reopens a locked brief
 ```
-| Phase | Meaning | `/go` does |
+Every stop prints a status line and the exact next command; lost? `/go <slug>` or `/status`. Stages are computed from files and state, never stored.
+| Stage | Meaning | `/go` does |
 |---|---|---|
-| PLAN / APPROVE | no PLAN.md / plan not approved or changed | planner writes it, or stops: read it, `/approve` |
-| BUILD | a step has no `done_at`, fewer than 2 failed checks | builder builds it, runs its check |
-| STUCK | 2 failed checks on a step, or 2 fix rounds used | stops, shows the failure; you decide |
-| REVIEW | no fresh review | reviewer writes REVIEW.md |
-| FIX | fresh review says FIX FIRST or REWORK | builder fixes the findings |
-| SHIP | fresh review says SHIP | stops: `/ship <slug>` |
-
-Every stop ends with a one-line status and the exact next command; lost? type `/go <slug>`. The phase is computed, never stored.
-STUCK on a step: fix it by hand, then `/approve <slug>` (resets `attempts`; your `!cmd` is not recorded), then `/go <slug>`; or edit PLAN.md (smaller step, other check), then `/approve` (keeps unchanged done steps).
+| BRAINSTORM | brief not locked | locks it (refuses while questions are open or no [MUST] feature), else shows what is missing |
+| ARCHITECT / DESIGN / PLAN / CRITIQUE / ANSWER | a document or critic round is missing, or a serious point is unanswered. DESIGN only if the brief says `ui: yes`, there is no DESIGN.md and a designer agent exists (none in piece 1: it never fires yet) | runs the chain from there (architect, designer if any, planner, critic, answers) |
+| DECIDE | documents not approved or changed | prints the digest: MUST features, risk R1 and its spike, milestones, steps, every serious critic point with its answer, and "Rejected serious points — you decide" |
+| BUILD | a step has no `done_at` | builder builds it, runs its check |
+| REARCHITECT | the spike step (step 1, `proves` R1) failed twice, or the brief changed after the architecture (`/brainstorm <slug> brief`, then `/go` re-locks it) | architect revises with the real failure or the new brief, planner redoes the plan, a new critic round, digest, `/approve` (refused until all of that has run) |
+| STUCK | 2 failed checks, 2 fix rounds, or 2 failed attempts at an automatic stage | stops, shows why; fix the cause, then `/go <slug> retry` (stage) or `/approve` (step) |
+| REVIEW / FIX / SHIP / DONE | no fresh review / FIX FIRST (max 2 rounds) / SHIP / every milestone shipped | reviewer / builder fixes / stops: `/ship <slug>` / says so |
+An approved v3 project (plan hash, no ARCHITECTURE.md) keeps the v3 loop (PLAN, APPROVE, BUILD, STUCK, REVIEW, FIX, SHIP) unchanged.
 
 ## 3. Layout
-```
-AGENTS.md                 loaded in every session under the workshop (voice, flow, gates)
-.opencode/                opencode.json, agents/ (9), commands/ (9), skills/ (9), plugins/ (safety-gate, brain-log)
-scripts/                  harness_state.py next.py status.py approve.sh new-project.sh bench.sh gate-test.mjs state-test.py ...
-                          sandbox/ = agent-shell + agent.sb, the OS sandbox every agent shell runs in
-mini-projects/<slug>/     its own git repo; _template/ is the scaffold
-  BRIEF AGENTS README NOTES LEARNINGS RESEARCH/   scaffolded
-  PLAN.md REVIEW.md CRITIQUE.md BUGHUNT.md        written by agents (PLAN holds the scope, REVIEW the blind spots)
-  .harness/state.json                             approval, step results, review (gitignored; trusted code only)
-brain/ (rules, evals, proposals, CHANGELOG.md), RESEARCH/ (workshop notes, gitignored), .harness/ (gitignored:
-dashboard.html, plugins-alive, events.jsonl, rule-usage.json, bench-history/). opencode reloads `.opencode/` on save.
-```
+- `AGENTS.md` (loaded in every session here); `.opencode/` (opencode.json with models, permissions, policies; agents/ 11; commands/ 10; skills/; plugins/ safety-gate, brain-log).
+- `scripts/`: next.py, harness_state.py, harness_docs.py, status.py, approve.sh, new-project.sh ...; `scripts/sandbox/` is the OS sandbox of every agent shell.
+- `mini-projects/<slug>/`: its own git repo (`_template/` is the scaffold). BRIEF, BRAINSTORM, ARCHITECTURE, PLAN, CRITIQUE, REVIEW, BUGHUNT are written by their agents;
+  `.harness/state.json` and `.harness/lock` (gitignored, trusted code only) hold approval, steps, milestones and the running chain.
+- `brain/` (rules, evals, proposals, CHANGELOG.md), `RESEARCH/`, `.harness/` (dashboard.html, events.jsonl, rule-usage.json, bench-history/; gitignored).
 
-## 4. Commands (9)
+## 4. Commands (10)
 | Command | Does | Writes |
 |---|---|---|
-| `/new "<goal>"` | scaffold; the script runs when you type it, the goal is passed as plain text | project dir |
-| `/go <slug>` | the next action, chosen by `scripts/next.py` | via workers |
-| `/approve <slug>` | **you** approve the current PLAN.md; runs `scripts/approve.sh`, no agent involved | `.harness/state.json` |
-| `/ship <slug>` | ship checklist; you commit; then the brain drafts one lesson proposal | `brain/proposals/` |
-| `/status [slug\|brain]` | text status (every project, one project with its steps and failure, or brain proposals + DECAY rules); refreshes the dashboard | `.harness/dashboard.html` |
-| `/critique <slug>` | optional: the strongest case against the project + failure scenarios | `CRITIQUE.md` |
-| `/hunt <slug> [focus]` | hunter, then skeptic, then a rule-based referee | `BUGHUNT.md` |
-| `/review <slug>` | on-demand review, same reviewer as `/go`'s review phase | `REVIEW.md` |
-| `/research <q>` | cited facts, pages, screenshots (into the project's `RESEARCH/` if the first word is a project) | `RESEARCH/` |
+| `/new <idea>` or `/new <slug>: <idea>` | scaffold (the script runs when you type it); brainstormer's first draft and questions | project dir, BRIEF.md |
+| `/brainstorm <slug> [topic\|brief]` | another round (see §2) | BRIEF.md or BRAINSTORM.md |
+| `/go <slug> [retry]` | the next action, chosen by `scripts/next.py` | via workers |
+| `/approve <slug>` | **you** approve; runs `scripts/approve.sh`, no agent; names every gap it refuses on | `.harness/state.json` |
+| `/critique <slug>` | one more critic round | CRITIQUE.md |
+| `/ship <slug>` | checklist; records the milestone once its first status line says SHIP; you commit; brain drafts a lesson | state, `brain/proposals/` |
+| `/status [slug\|brain]` | text status; the digest at DECIDE; brain proposals + DECAY rules; refreshes the dashboard | `.harness/dashboard.html` |
+| `/hunt <slug> [focus]` | hunter, skeptic, rule-based referee. *Verified* = skeptic CONFIRMS, HIGH, severity unchanged | BUGHUNT.md |
+| `/review <slug>` | on-demand review, same reviewer | REVIEW.md |
+| `/research <q>` | cited facts, pages, screenshots (into `RESEARCH/` of the project if the first word is one) | `RESEARCH/` |
 
-`$ARGUMENTS` is pasted raw into a command template before its `` !`...` `` shell runs; type only slugs you trust.
-`/hunt`: *Verified* needs the skeptic to CONFIRM, confidence HIGH and severity unchanged; treat it as a strong lead.
-The ship gate ignores CRITIQUE and BUGHUNT.
+**Free text warning (`/new`, `/brainstorm`):** type no backticks. A backtick cuts the text (the command now refuses: "cut at a backtick");
+a later `` !`...` `` in your text would run as its own command, outside the agent sandbox. A line that is exactly `HARNESS_TEXT_END`
+ends the text early and the lines after it run in your shell. `$ARGUMENTS` is pasted raw into the template: type only text you trust.
+**/ship:** the milestone is recorded when you type it and its checks pass. If checklist item 2 or 3 then fails, fix it and commit by hand; the record stays (no way back in piece 1).
 
-## 5. Agents (9)
-`orchestrator` is the default and the only door. Models live in one place, `agent.<name>.model` in
-`.opencode/opencode.json` (a `model:` line in an agent file would override it, so none has one). Claude does the
-hard roles, the review, the brain and the critique (free limits stalled the loop); free non-Claude models verify bugs.
-
+## 5. Agents (11)
+`orchestrator` is the default and the only door; workers never spawn workers. Models live only in `agent.<name>.model` in `.opencode/opencode.json`
+(no agent file has a `model:` line). Claude does the thinking and research roles; one free model (skeptic) verifies bugs. Reports end `DID / PROOF|BASIS / BLOCKED / NEXT`.
 | Agent | Model | Writes | Shell |
 |---|---|---|---|
-| orchestrator | anthropic/claude-haiku-5-5 | `BUGHUNT.md` only (as `/hunt` referee) | read-only |
-| planner | anthropic/claude-sonnet-5-5 | `PLAN.md`, `LEARNINGS.md` | read-only |
-| builder | anthropic/claude-sonnet-5-5 | code; never PLAN/REVIEW/CRITIQUE/BUGHUNT, `.env`, `.git` | any command (sandboxed) |
-| reviewer | anthropic/claude-haiku-5-5 | `REVIEW.md`, `LEARNINGS.md` | read-only git + test runners |
-| critic | anthropic/claude-sonnet-5-5 | `CRITIQUE.md` | read-only |
-| hunter | anthropic/claude-sonnet-5-5 | only `*bughunt*` repro tests (each write asks) | read-only git; test runners ask |
+| orchestrator | claude-haiku-5-5 | `BUGHUNT.md` only | read-only |
+| brainstormer | claude-sonnet-5-5 | `BRIEF.md`, `BRAINSTORM.md` | read-only |
+| architect | claude-opus-5-5 | `ARCHITECTURE.md` | read-only |
+| planner | claude-sonnet-5-5 | `PLAN.md`, `LEARNINGS.md` | read-only |
+| critic | claude-sonnet-5-5 | `CRITIQUE.md` | read-only |
+| builder | claude-sonnet-5-5 | code; no project document, `.env`, `.git` | any command (sandboxed) |
+| reviewer | claude-sonnet-5-5 | `REVIEW.md`, `LEARNINGS.md` | read-only git + test runners |
+| hunter | claude-sonnet-5-5 | `*bughunt*` repro tests (each asks) | read-only git; test runners ask |
 | skeptic | opencode/deepseek-v4.1-flash-free | nothing | read-only git; test runners ask |
-| researcher | opencode/nemotron-3.5-super-vl-free (vision) | `RESEARCH/**` | ls, cat, html2md.py; webfetch + Playwright |
-| brain (hidden) | anthropic/claude-haiku-5-5 | `brain/proposals/**` | read-only |
+| researcher | claude-haiku-5-5 | `RESEARCH/**` | ls, cat, html2md.py; web + Playwright |
+| brain (hidden) | claude-sonnet-5-5 | `brain/proposals/**` | read-only |
+Free models vanish or hit limits: bench `models-resolve` checks; swap one in `opencode.json`.
 
-Builders report `DID / PROOF / BLOCKED / NEXT`, analysts `DID / BASIS / BLOCKED / NEXT`. Free models vanish or hit
-"Free usage limit reached" without notice: bench `models-resolve` checks they exist; wait, or swap one in `opencode.json`. The 9 skills load on demand.
+## 6. State, digest, dashboard
+`state.json` holds facts only; writers are `approve.sh`, `next.py`, the `/ship` template and the safety-gate plugin, never an agent.
+- **Step done:** the plugin sees the step's check run verbatim at the project root (whitespace ignored). Exit 0: `done_at`. Failure: `attempts` +1, `last_failure` = last 40 lines. Limit 2.
+- **Review fresh:** the plugin records the REVIEW.md verdict and a hash of the code (docs and `.harness/` excluded); any code change makes it stale.
+- **Limits in code:** 16 delegations per human turn, one at a time; one chain per project (lock, expires after 30 minutes); 2 attempts per automatic stage. Dashboard: `.harness/dashboard.html`, one card per project, read-only; rebuilt by `/go`, `/critique`, `/approve`, `/status`, `/ship`, `/brainstorm`.
 
-## 6. State and dashboard
-`mini-projects/<slug>/.harness/state.json` holds facts only: plan hash, approval time, steps (`done_at`, `attempts`,
-`last_failure`), the recorded review (verdict, tree hash) and `fix_rounds`. Writers: `approve.sh` (via
-`harness_state.py`), `next.py` (fix rounds) and the safety-gate plugin. Agents cannot write `.harness/`.
-- **Step done:** the builder runs the step's check verbatim, from the project root. The prompt says "as your LAST command" (a prompt rule); the plugin needs only the exact run at the project root, and skips a background run. The plugin
-  compares it with the current step's check (whitespace ignored). Exit 0: `done_at` set. Failure (non-zero exit,
-  error, timeout, kill): `attempts` +1, `last_failure` = last 40 lines. Other commands are ignored. Limit: 2 failures.
-- **Review fresh:** when REVIEW.md is written the plugin records its verdict and a hash of the project's code (docs
-  and `.harness/` excluded). Any code change after that makes the review stale. No VERDICT line removes the record.
-- **Dashboard:** `.harness/dashboard.html`, one card per project, reloads every 5 seconds. Regenerated by `/go`,
-  `/approve`, `/status`, `/ship` and by the plugin after a step result or a review. Read-only: no buttons, no
-  server. Credit per project is not on it (needs a session-to-project mapping; not built).
+## 7. Security in short (full table, push/publish and limits: `AUDIT.md` §8b)
+Five layers: `policies` (hard denies), per-agent permissions (each agent writes only its own files), the safety-gate plugin (plan gate, ship gate,
+write confinement, circuit breaker), an OS sandbox around every agent shell (macOS; writes only the project; no keys; never `.git`), and prompts.
+"Operation not permitted" / "Blocked by configuration policy" = the sandbox or `policies` did its job. Push and publish are human-only. Your own `!cmd` is not sandboxed. Limits: grep/glob/Playwright are outside the sandbox; the plan gate misses
+writes made by programs the builder runs; network stays open.
 
-## 7. Enforcement — five layers
-| Layer | Where | What it guarantees |
-|---|---|---|
-| 1. Policies | `opencode.json` → `policies` | Hard deny for every agent, beats agent rules and saved approvals: destructive git/rm/disk commands, opaque `bash -c`/`eval`, `sudo`, curl uploads, agents driving `opencode api/auth/service`, writing `.harness/` or running `approve.sh`, unsafe Playwright tools, write/exec flags in "read-only" commands (`git --output`, `rg --pre`, `find -exec`/`-execdir`), and `git push` and publishing (speed bump, see below; `npm`/`pnpm`/`yarn publish`, `twine upload`, `gh release`). |
-| 2. Permissions | `opencode.json` → `permission` + each agent's frontmatter | Deny-by-default editing; each agent writes only its own files; Code Mode (`execute`) denied; shell allow-lists per role. The builder's shell is `*: allow`, because layer 4 confines it. |
-| 3. Plugin | `.opencode/plugins/safety-gate.ts` | Plan gate: the edit/write/patch tools and simple shell redirects (`>`, `>>`, `cp`, `mv`, `install`, `mkdir`, `touch`, `tee`) write no code in a project without the PLAN.md you approved, unchanged. Ship gate: an agent's commit, tag, merge, cherry-pick, revert, rebase or am (its shell call, matched by text) checks the project of its workdir (outside a project = refused; `git -C` and `cd` are not parsed; the sandbox refuses every agent write under `.git`, so an agent commit cannot happen at all) and needs a recorded SHIP verdict, a live REVIEW.md that says SHIP, and a matching code hash. Step and review recording (§6). Write confinement: write tools (every agent, every session, workshop root too) reach only `mini-projects/<slug>/`, `brain/proposals/` and the workshop `RESEARCH/`; symlinks and different-case spellings of PLAN/REVIEW/CRITIQUE/BUGHUNT are refused. |
-| 4. OS sandbox | `scripts/sandbox/` (wired by the plugin's shell hook) | Every agent shell runs under macOS `sandbox-exec`: writes only the project (no project workdir, or `_template` = read-only), temp dirs and tool caches (`~/.npm`, `~/.cache`, `~/Library/Caches`), never `.harness/` or anything under `.git` (so agents never `git add`/`commit`; you do), no `.env`, `*.pem`, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.netrc`, opencode's data. Also withheld: `~/.npmrc`, `~/.pypirc`, `~/.yarnrc.yml`, `~/.git-credentials`, `~/.config/git/credentials`, the macOS keychain git helper (blocked by name), the launchd ssh-agent socket. Secret-looking env vars are removed. Applies to `python3` and `node` too. Your own `!cmd` in the TUI is not sandboxed. |
-| 5. Prompts | `AGENTS.md`, agent bodies | Voice, flow, report contract. Not a control on their own. |
+## 8. Ops
+- Start opencode **in the workshop root**. Before and after any change, all green: `bash scripts/bench.sh`, `node scripts/gate-test.mjs`, `python3 scripts/state-test.py`, `python3 scripts/rule-report.py --check`. One logical change per commit. New machine: `TELEPORT.md`.
+- The brain: `brain/rules/NNN-*.md` (agents cannot write them); `/ship` makes ONE proposal in `brain/proposals/`; you apply it. `rule-report.py` flags `DECAY` after 3 projects without a read.
+- Never `opencode run --auto` or "always allow" for broad commands. Do not edit `.opencode/` during a live test (hot reload). Outside the repo: service env `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1`, a skill-hiding policy in `~/.config/opencode/opencode.json`, the Anthropic key (`! opencode auth login`).
+- New agent or command: free name (an existing one is silently replaced), allow it under `task:` in `orchestrator.md`, add it to `scripts/bench.py`, set its model in `opencode.json`, start `permission:` from deny, run the bench.
 
-**Push and publish.** The six `policies` denies are a **speed bump**: easy to bypass by spelling (`git -C . push`).
-The real control is layer 4 withholding credentials. Residual risk: a sandboxed agent can copy the keychain helper
-into its project and run it, or call `/usr/bin/security`. So do not keep a git HTTPS token in the macOS keychain for
-repos you vibecode in; use ssh keys (the sandbox blocks `~/.ssh` and the agent socket). Custom ssh-agent sockets and
-credential paths set by `$XDG_CONFIG_HOME` or `GIT_CONFIG` are not covered.
-
-**Other limits.** The sandbox covers shell only: the grep/glob tools and the Playwright MCP server are not shell, so
-a grep search could still show `.env` contents. Network stays open. macOS only; elsewhere agent shells are refused
-(fail closed: "HARNESS SANDBOX: cannot sandbox this agent shell"). Scripts that write harness state run from the command template when you type the command, outside the
-sandbox; agents cannot run them. The plan gate does not see writes made by a program the builder runs (`sed -i`, `python3 -c`, `node x.js`, `git apply`, `npm install`); the sandbox limits where they write, not whether a plan exists. The step's file list is a prompt-level rule; code does not enforce it. Gotchas: `brain/rules/060-ops.md`.
-
-## 8. The brain
-- `brain/rules/NNN-*.md`: one idea each; agents cannot write them. `/ship` makes the `brain` agent write ONE proposal
-  in `brain/proposals/`; you apply what you approve (edit the rule and `brain/evals/bench.yaml`, run the bench).
-- brain-log counts rule reads in `.harness/rule-usage.json`; `scripts/rule-report.py` (`/status brain`) flags `DECAY: propose delete` after 3 new projects without a read. Every rule needs an eval.
-
-## 9. Ops
-- Start opencode **in the workshop root**. Before and after any change, all green: `bash scripts/bench.sh`,
-  `node scripts/gate-test.mjs`, `python3 scripts/state-test.py`, `python3 scripts/rule-report.py --check`. One logical
-  change per commit. New machine: `bash scripts/bootstrap.sh` and `TELEPORT.md`.
-- Never `opencode run --auto` here; never click "always allow" for broad commands (saved approvals override every
-  `ask`). Do not edit `.opencode/` while a live test runs (it hot-reloads).
-- Outside the repo: service env `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1`, the skill-hiding policy in
-  `~/.config/opencode/opencode.json`, saved approvals (empty on purpose), the Anthropic key (`! opencode auth login`).
-- New agent or command: pick a free name (an existing command is silently replaced), allow it under `task:` in
-  `orchestrator.md`, add it to `scripts/bench.py`, set `agent.<name>.model` in `opencode.json`, start its `permission:`
-  from deny, run the bench. Broken frontmatter drops an agent silently.
-
-## 10. Troubleshooting
+## 9. When something goes wrong
 | Symptom | Cause | Fix |
 |---|---|---|
-| "plan not approved or changed", "SAFETY GATE: plan gate" | no PLAN.md, never approved, or edited since | `/go` (plan), read it, `/approve <slug>` — the gate is working |
-| `/go` says STUCK | 2 failed checks on a step, or 2 fix rounds | read the failure; fix by hand or edit PLAN.md, then `/approve <slug>`, then `/go <slug>` |
-| `/go` says "state unreadable" | `state.json` hand-edited or corrupt | `/approve <slug>` again |
-| A step never turns done | the builder ran the check in another form | the INSTRUCTION gives the exact command and workdir; run `/go` again |
-| "SAFETY GATE: ship gate" (stale, not SHIP, no VERDICT) | code changed after the review, or the verdict is not SHIP | `/go <slug>` to review again |
-| "SAFETY GATE: write confinement" | a write outside the project, through a symlink, or a different-case file name | write inside `mini-projects/<slug>/` with the exact name |
-| "Operation not permitted", "Blocked by configuration policy" | the OS sandbox or a `policies` hard stop did its job | intended; run it yourself (`!cmd` in the TUI) if legitimate |
+| "plan not approved or changed", "SAFETY GATE: plan gate" | documents not approved, or edited since | `/go`, read the digest, `/approve <slug>` — the gate is working |
+| `/go` says STUCK | 2 failed checks / fix rounds / stage attempts | read the message; fix the cause; `/go <slug> retry`, or `/approve <slug>` for a step |
+| `/approve` REFUSED | brief unlocked, a file fails its format check, an unanswered serious point, a revise or a requested critic round not run yet | it names each gap; fix it, retry |
+| "a chain is running" (`/go`, `/critique`, `/approve`, `/ship`) | a chain's lock is held; it outlives a turn in which no delegation completed (orchestrator never delegated, all errored, or you interrupted the first) until it expires after 30 minutes | `/go <slug> retry` clears it; a declined or interrupted delegation keeps "one delegation at a time" refusing until that turn ends |
+| "state unreadable" | `state.json` corrupt or hand-edited | v4 project: delete `.harness/state.json` by hand, then `/go`. v3 project: `/approve <slug>` again |
+| "SAFETY GATE: ship gate"; a step never turns done | code changed after the review, or verdict not SHIP; or the builder ran the check in another form | `/go <slug>` (reviews again, or repeats the exact command) |
 
-## 11. What changed from v2
-v2 had 14 agents, 20 commands and a loop you drove by hand. v3 keeps the v2.2 security core; the workflow runs on recorded state.
-- `/go` replaces `/scope /plan /build /review /blind`; `/ship` absorbs `/learn`; `/critique` replaces `/grill /whatif`;
-  `/review` replaces `/pr-review`; `/research` absorbs `/browse /html2md`; `/evolve` moved into `/status brain`;
-  `/bench` is `bash scripts/bench.sh`; `/map` and `/caveman` are gone (caveman stays the default voice).
-- 14 agents became 9 (scoper+architect = planner, coder = builder, three reviewers = reviewer, devil+whatif = critic);
-  SCOPE.md and BLIND.md are gone (scope is in PLAN.md, blind spots in REVIEW.md).
-- New: recorded steps and checks, `/status` + dashboard, the review tree hash (v2 allowed a commit after a SHIP review
-  even if code changed since), models in one place, Claude for the hard roles.
-- Security changes: the builder trusts the sandbox; push/publish are human-only (the sandbox withholds credentials);
-  write confinement now covers workshop-root sessions and symlinks.
-
-### Live-run results (v3, 2026-10-25: one tiny project, 3 steps, judged from the JSON event stream and disk)
-- Verified: `/new`, `/go` plan, `/approve`, 3 x `/go` build, `/ship`. A step turned done only after the builder's exact check ran at the
-  project root, exit 0; no permission asks; `/status` and dashboard matched `state.json`; policy refused `git push` and `npm publish`;
-  a fresh-SHIP agent commit went through, and was refused as stale after a one-line edit (agents can no longer write `.git`).
-- Not verified: `/go`'s review and `/ship`'s lesson (free reviewer and brain hit "Free usage limit reached"; the review ran on Haiku in its own session). Both are on Haiku now. No FIX or STUCK.
-- Fixed: ship gate keys on the commit's workdir; `/ship` prints blind spots and git status itself; reviewer runs one command per call.
-  Credit: $0.14 (sum of `session.step.ended` cost over 15 sessions; free models cost 0).
+## 10. What changed from v3 (and live results)
+v3 started at a plan; v4 piece 1 adds the front half in code: 9 agents became 11 (brainstormer, architect), 9 commands 10 (`/brainstorm`). New: brief lock, ARCHITECTURE.md, milestone plans, critic rounds with answers, the digest, one approval hash, REARCHITECT, `/go <slug> retry`, lock and circuit breaker, `/ship` records the milestone. Architect on Opus.
+- Seen live in v4 (Task 2, spec §14.1): the FIX round, the STUCK step and STUCK on fix rounds all work; `/ship` with the Haiku brain works. The Haiku reviewer was unsteady (SHIP, FIX FIRST, FIX FIRST, SHIP on the same code), so the reviewer and the brain now run on Sonnet (your call, 2026-10-30). Open gaps for piece 2 (spec §14.1): a finding against PLAN.md burns the builder's fix rounds; docs-only fixes never clear FIX FIRST; earlier checks are not re-run after a fix; README promises go unchecked.
+- Acceptance run (2026-10-30, spec §14.2): `/new git-course: <idea>` → 2 brainstorm rounds → `/go` (6 delegations) → `/critique` (3) → `/approve`, $2.23 in all. Every check printed OK, delegations ran one at a time, the lock was cleaned up, the architect ran on Opus. Fixed on the way: the digest hid a rejection when two files answered one point; the researcher's free model hit its limit (now Haiku).

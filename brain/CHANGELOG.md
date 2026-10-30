@@ -2,6 +2,24 @@
 
 Format: `## vX.Y - date - one line what changed and why`
 
+## v4.0-piece1 - 2026-10-29 - the front half: idea -> brainstorm -> architecture -> plan -> critique -> approval digest, 11 agents, 10 commands
+Why: v3 started at a plan and felt clunky; v4's yardstick is "more capable, but light". Design: docs/superpowers/specs/2026-10-27-harness-v4-front-half-design.md; pieces 2-4: ...-roadmap.md.
+- `/new <idea>` scaffolds and the new brainstormer drafts BRIEF.md (3-5 questions per round); `/brainstorm <slug> [topic|brief]` any time.
+  `/go` locks the brief in code, then runs the chain: architect (ARCHITECTURE.md, risk R1 with a spike, milestones) -> planner (PLAN.md for the
+  current milestone) -> critic (one CRITIQUE.md round) -> answers; code prints the approval digest (never a model summary). `/approve` records ONE
+  hash over BRIEF + ARCHITECTURE (+ DESIGN) + PLAN and names every gap it refuses on; `/critique` asks for one more round.
+- Stages (BRAINSTORM, ARCHITECT, PLAN, CRITIQUE, ANSWER, DECIDE, REARCHITECT, then the v3 BUILD/STUCK/REVIEW/FIX/SHIP, DONE) are computed in
+  scripts/next.py. A failed spike -> REARCHITECT. 2 failed attempts at an automatic stage -> STUCK; `/go <slug> retry` clears it. `/ship` records
+  the milestone shipped (trusted code); the next `/go` plans the next milestone. Approved v3 projects keep the v3 loop.
+- Ground rules in code: project lock (30-minute expiry), circuit breaker (16 delegations per human turn, one at a time), parser feedback to the
+  agent that wrote a bad file, write ownership for the new files, free text for /new and /brainstorm passed as data (a backtick cuts it: refused).
+- Agents 9 -> 11 (brainstormer on Sonnet, architect on Opus; critic moved to Sonnet), commands 9 -> 10 (/brainstorm). Orchestrator and researcher on Haiku; reviewer and brain moved from Haiku to
+  Sonnet (the human's call, 2026-10-30: the Haiku reviewer was unsteady, see below).
+- Docs: HANDBOOK rewritten and trimmed from 165 to 110 lines; the security detail moved to AUDIT.md section 8b; AGENTS.md trimmed to pointers (5999 -> 5679 bytes).
+- Live results (Task 2, spec section 14.1): the v3 FIX round, STUCK step and STUCK on fix rounds work; the Haiku reviewer is unsteady on identical code.
+- Weight added (wc -l at f4b6914): scripts/next.py 682 (was 179 on harness-v4), scripts/harness_state.py 839 (was 332),
+  scripts/new-project.sh 113 (was 93), scripts/harness_docs.py 338 (new file). Total of those four: 1972 lines, about 1330 more than before. Tests: gate-test 211 cases, state-test 176, bench 32, rule-report 8 rules.
+
 ## v3.0 - 2026-10-25 - the /go loop: recorded steps, /status + dashboard, 9 agents, 9 commands
 Why: v2.2 was strong but heavy (too much to remember, too many steps). Design: docs/superpowers/specs/2026-10-25-harness-v3-design.md.
 - One `/go <slug>`: scripts/next.py decides the phase (PLAN, APPROVE, BUILD, STUCK, REVIEW, FIX, SHIP); the orchestrator

@@ -32,7 +32,15 @@
     "home/.yarnrc.yml",
     "home/.git-credentials",
     "home/.config/git/credentials",
-    "home/.gitconfig"
+    "home/.gitconfig",
+    "mini-projects/nodocs/src/.keep",
+    "mini-projects/v4a/src/.keep",
+    "mini-projects/v4b/src/.keep",
+    "mini-projects/lockp/.harness/lock",
+    "mini-projects/lockq/src/.keep",
+    "home/locks/lock",
+    "mini-projects/docsh/PLAN.md",
+    "mini-projects/docsh/src/.keep"
   ],
   "cases": [
     {
@@ -947,7 +955,9 @@
   "approve": [
     "mini-projects/good",
     "mini-projects/stale",
-    "mini-projects/links"
+    "mini-projects/links",
+    "mini-projects/v4a",
+    "mini-projects/v4b"
   ],
   "edit_after_approve": [
     "mini-projects/stale"
@@ -1275,6 +1285,118 @@
       "command": "f=$(mktemp) && echo x > \"$f\" && rm \"$f\"",
       "expect": "allow",
       "note": "sandbox I1 control: the read-only shell may still write temp dirs"
+    },
+    {
+      "id": "x41",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "echo x > PLAN.md",
+      "expect": "block",
+      "note": "sandbox rule 10: an agent shell cannot overwrite a doc file (PLAN.md)"
+    },
+    {
+      "id": "x42",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "echo x > review.md",
+      "expect": "block",
+      "note": "sandbox rule 10: nor create one under a case alias (review.md)"
+    },
+    {
+      "id": "x43",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "echo a > a.txt && cp a.txt CRITIQUE.md",
+      "expect": "block",
+      "note": "sandbox rule 10: cp onto CRITIQUE.md is refused"
+    },
+    {
+      "id": "x44",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "echo b > b.txt && mv b.txt Brief.md",
+      "expect": "block",
+      "note": "sandbox rule 10: mv onto Brief.md (a case alias) is refused"
+    },
+    {
+      "id": "x45",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "mkdir -p sub && echo x > sub/ARCHITECTURE.md",
+      "expect": "allow",
+      "note": "sandbox rule 10 control: only the project root's doc files are guarded; sub/ARCHITECTURE.md is a plain file"
+    },
+    {
+      "id": "x46",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "python3 -c \"open('Design.md', 'w')\"",
+      "expect": "block",
+      "note": "sandbox rule 10: an interpreter cannot write DESIGN.md either"
+    },
+    {
+      "id": "x47",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "echo x >> brainstorm.MD || echo x > BugHunt.md",
+      "expect": "block",
+      "note": "sandbox rule 10: BRAINSTORM.md and BUGHUNT.md aliases are refused (both must fail)"
+    },
+    {
+      "id": "x48",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "rm PLAN.md",
+      "expect": "block",
+      "note": "sandbox rule 10: a doc file cannot be deleted from a shell"
+    },
+    {
+      "id": "x49",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "echo x > notes.txt && echo x > NOTES.md && echo x > LEARNINGS.md && mkdir -p RESEARCH && echo x > RESEARCH/t.md && echo x > MY-PLAN.md && echo x > PLAN.md.txt",
+      "expect": "allow",
+      "note": "sandbox rule 10 control: notes.txt, NOTES.md, LEARNINGS.md, RESEARCH/ and look-alike names stay writable"
+    },
+    {
+      "id": "x50",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "mkdir -p dist && echo x > dist/review.md",
+      "expect": "allow",
+      "note": "sandbox rule 10 control: a build may write dist/review.md (not at the project root)"
+    },
+    {
+      "id": "x51",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "mkdir -p node_modules/x && echo x > node_modules/x/DESIGN.md",
+      "expect": "allow",
+      "note": "sandbox rule 10 control: npm may unpack a package that ships DESIGN.md"
+    },
+    {
+      "id": "x52",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "echo x > plan.md",
+      "expect": "block",
+      "note": "sandbox rule 10: the root plan.md (a case alias of PLAN.md) is still refused"
+    },
+    {
+      "id": "x53",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "mkdir -p hl && ln PLAN.md hl/PLAN.md",
+      "expect": "block",
+      "note": "sandbox rule 10: no hard link to the root PLAN.md (a write through hl/PLAN.md would change the root file)"
+    },
+    {
+      "id": "x54",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "ln -s . self && echo x > self/PLAN.md",
+      "expect": "block",
+      "note": "sandbox rule 10: a symlinked folder does not reach the root PLAN.md (the sandbox sees the resolved path)"
     }
   ],
   "telemetry": {
@@ -2046,6 +2168,10 @@
     {
       "link": "ws3/RESEARCH",
       "to": "../home"
+    },
+    {
+      "link": "mini-projects/lockq/.harness",
+      "to": "../../home/locks"
     }
   ],
   "executables": [
@@ -2057,5 +2183,610 @@
     "mini-projects/gitmv",
     "mini-projects/gitcd",
     "mini-projects/gitcfg"
+  ],
+  "v4docs": [
+    {
+      "id": "o1",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/ARCHITECTURE.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "H15: ARCHITECTURE.md is a doc file, written before any PLAN.md"
+    },
+    {
+      "id": "o2",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/BRAINSTORM.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "H15: BRAINSTORM.md is a doc file, written before any PLAN.md"
+    },
+    {
+      "id": "o3",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/DESIGN.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "H15: DESIGN.md is a doc file, written before any PLAN.md"
+    },
+    {
+      "id": "o4",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/architecture.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "H15 alias: architecture.md is not ARCHITECTURE.md",
+      "message_has": "different-case"
+    },
+    {
+      "id": "o5",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/brief.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "H15 alias: brief.md is not BRIEF.md (no BRIEF.md exists yet)",
+      "message_has": "different-case"
+    },
+    {
+      "id": "o6",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/Brainstorm.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "H15 alias: Brainstorm.md is not BRAINSTORM.md",
+      "message_has": "different-case"
+    },
+    {
+      "id": "o7",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/design.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "H15 alias: design.md is not DESIGN.md",
+      "message_has": "different-case"
+    },
+    {
+      "id": "v1",
+      "session": "mini-projects/v4a",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/v4a/src/app.js",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "H1 plan gate: code write in a v4-approved project"
+    },
+    {
+      "id": "v2",
+      "session": "mini-projects/v4a",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/v4a/src/app.js",
+        "content": "x"
+      },
+      "append": {
+        "file": "mini-projects/v4a/ARCHITECTURE.md",
+        "text": "\nchanged after approval\n"
+      },
+      "expect": "block",
+      "message_has": "plan gate",
+      "note": "H1 plan gate: ARCHITECTURE.md edited after approval revokes it"
+    },
+    {
+      "id": "v3",
+      "session": "mini-projects/v4b",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/v4b/src/app.js",
+        "content": "x"
+      },
+      "state": {
+        "project": "mini-projects/v4b",
+        "set": {
+          "milestones_shipped": [
+            "M1"
+          ]
+        }
+      },
+      "expect": "block",
+      "message_has": "plan gate",
+      "note": "H24 plan gate: the approved plan's milestone has shipped"
+    },
+    {
+      "id": "v4",
+      "session": "mini-projects/v3mode",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/v3mode/src/app.js",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "H1 plan gate: a v3-mode project (plan hash only) still passes"
+    }
+  ],
+  "breaker": [
+    {
+      "id": "b1",
+      "events": [
+        [
+          "session.execution.started",
+          "A"
+        ]
+      ],
+      "calls": [
+        [
+          "A",
+          "planner",
+          6
+        ],
+        [
+          "A",
+          "critic",
+          5
+        ],
+        [
+          "A",
+          "architect",
+          5
+        ]
+      ],
+      "expect": "allow",
+      "note": "16 delegations in one turn from session A"
+    },
+    {
+      "id": "b2",
+      "calls": [
+        [
+          "A",
+          "researcher",
+          1
+        ]
+      ],
+      "expect": "block",
+      "message_has": "SAFETY GATE: circuit breaker. 16 delegations in this turn (planner×6, critic×5, architect×5). Stop and tell the human; their next message resets it.",
+      "note": "the 17th is refused, naming the agents"
+    },
+    {
+      "id": "b3",
+      "events": [
+        [
+          "session.execution.started",
+          "B"
+        ]
+      ],
+      "calls": [
+        [
+          "B",
+          "planner",
+          1
+        ]
+      ],
+      "expect": "allow",
+      "note": "session B has its own count"
+    },
+    {
+      "id": "b4",
+      "events": [
+        [
+          "session.execution.succeeded",
+          "A"
+        ],
+        [
+          "session.execution.started",
+          "A"
+        ]
+      ],
+      "calls": [
+        [
+          "A",
+          "planner",
+          1
+        ]
+      ],
+      "expect": "allow",
+      "note": "A's turn ends (succeeded) and its next turn starts: a fresh count"
+    },
+    {
+      "id": "b5",
+      "fill": [
+        [
+          "A",
+          "planner",
+          15
+        ]
+      ],
+      "full": "A",
+      "events": [
+        [
+          "session.execution.started",
+          "C"
+        ],
+        [
+          "session.execution.succeeded",
+          "C"
+        ]
+      ],
+      "calls": [
+        [
+          "A",
+          "planner",
+          1
+        ]
+      ],
+      "expect": "block",
+      "message_has": "circuit breaker",
+      "note": "a turn of a session that never delegated changes nothing"
+    },
+    {
+      "id": "b6",
+      "events": [
+        [
+          "session.execution.failed",
+          "A"
+        ]
+      ],
+      "calls": [
+        [
+          "A",
+          "planner",
+          1
+        ]
+      ],
+      "expect": "allow",
+      "note": "the terminal event alone resets (session.execution.failed), before the next started"
+    },
+    {
+      "id": "b7",
+      "fill": [
+        [
+          "A",
+          "planner",
+          15
+        ]
+      ],
+      "full": "A",
+      "events": [
+        [
+          "session.execution.interrupted",
+          "A"
+        ],
+        [
+          "session.execution.started",
+          "A"
+        ]
+      ],
+      "calls": [
+        [
+          "A",
+          "planner",
+          1
+        ]
+      ],
+      "expect": "allow",
+      "note": "session.execution.interrupted, then the next turn: a fresh count"
+    },
+    {
+      "id": "b8",
+      "fill": [
+        [
+          "A",
+          "planner",
+          15
+        ]
+      ],
+      "full": "A",
+      "events": [
+        [
+          "session.execution.started",
+          "A"
+        ]
+      ],
+      "calls": [
+        [
+          "A",
+          "planner",
+          1
+        ]
+      ],
+      "expect": "allow",
+      "note": "a missed turn end: the next session.execution.started alone resets (P8)"
+    }
+  ],
+  "parallel": [
+    {
+      "id": "p1",
+      "open": [
+        [
+          "A",
+          "planner"
+        ]
+      ],
+      "calls": [
+        [
+          "A",
+          "critic",
+          1
+        ]
+      ],
+      "expect": "block",
+      "message_has": "SAFETY GATE: one delegation at a time. Wait for the running @planner to finish, then call the next one.",
+      "note": "R8: a second delegation while A's first is still running"
+    },
+    {
+      "id": "p2",
+      "close": [
+        [
+          "A",
+          "planner",
+          "error"
+        ]
+      ],
+      "calls": [
+        [
+          "A",
+          "critic",
+          1
+        ]
+      ],
+      "expect": "allow",
+      "note": "R8: after the first call's execute.after (status error) the next one runs"
+    },
+    {
+      "id": "p3",
+      "open": [
+        [
+          "A",
+          "architect"
+        ]
+      ],
+      "calls": [
+        [
+          "B",
+          "planner",
+          1
+        ]
+      ],
+      "expect": "allow",
+      "note": "R8: session B is not held up by A's running delegation"
+    },
+    {
+      "id": "p4",
+      "events": [
+        [
+          "session.execution.interrupted",
+          "A"
+        ]
+      ],
+      "calls": [
+        [
+          "A",
+          "planner",
+          1
+        ]
+      ],
+      "expect": "allow",
+      "note": "R8: A's turn end clears a running flag whose execute.after never came"
+    },
+    {
+      "id": "p5",
+      "events": [
+        [
+          "session.execution.started",
+          "C"
+        ]
+      ],
+      "calls": [
+        [
+          "C",
+          "planner",
+          1,
+          {
+            "background": true
+          }
+        ]
+      ],
+      "expect": "block",
+      "message_has": "SAFETY GATE: one delegation at a time. Background delegations are not allowed; call it in the foreground.",
+      "note": "a background delegation is refused (it would return at once and run beside the next one)"
+    },
+    {
+      "id": "p6",
+      "calls": [
+        [
+          "C",
+          "planner",
+          1
+        ]
+      ],
+      "expect": "allow",
+      "note": "control: the same call in the foreground runs (the refused one left nothing running)"
+    }
+  ],
+  "lock_files": [
+    "mini-projects/lockp/.harness/lock"
+  ],
+  "lock": [
+    {
+      "id": "l1",
+      "write_locks": true,
+      "fill": [
+        [
+          "D",
+          "planner",
+          1
+        ]
+      ],
+      "events": [
+        [
+          "session.execution.succeeded",
+          "N"
+        ]
+      ],
+      "lock": "present",
+      "note": "P7: a lock survives the turn end of a session that never delegated"
+    },
+    {
+      "id": "l2",
+      "events": [
+        [
+          "session.execution.succeeded",
+          "D"
+        ]
+      ],
+      "lock": "absent",
+      "note": "P7: the lock is gone after a delegating session's turn end"
+    },
+    {
+      "id": "l3",
+      "write_locks": true,
+      "fill": [
+        [
+          "D",
+          "planner",
+          1
+        ]
+      ],
+      "events": [
+        [
+          "session.execution.failed",
+          "D"
+        ]
+      ],
+      "lock": "absent",
+      "note": "P7: also after a failed turn end"
+    },
+    {
+      "id": "l4",
+      "write_locks": true,
+      "fill": [
+        [
+          "D",
+          "planner",
+          1
+        ]
+      ],
+      "events": [
+        [
+          "session.execution.succeeded",
+          "D"
+        ]
+      ],
+      "lock": "absent",
+      "kept": [
+        "home/locks/lock"
+      ],
+      "note": "P7: a .harness that is a symlink is never followed (the file it points at stays)"
+    },
+    {
+      "id": "l5",
+      "write_locks": true,
+      "fill": [
+        [
+          "D",
+          "architect",
+          1
+        ]
+      ],
+      "open": [
+        [
+          "D",
+          "planner"
+        ],
+        [
+          "K",
+          "builder"
+        ]
+      ],
+      "close": [
+        [
+          "K",
+          "builder",
+          "error"
+        ]
+      ],
+      "events": [
+        [
+          "session.execution.succeeded",
+          "K"
+        ]
+      ],
+      "lock": "present",
+      "note": "a worker child K that tries to delegate (refused by the depth limit: status error) does not free the lock at its own turn end"
+    },
+    {
+      "id": "l6",
+      "open": [
+        [
+          "K2",
+          "builder"
+        ]
+      ],
+      "events": [
+        [
+          "session.execution.succeeded",
+          "K2"
+        ]
+      ],
+      "lock": "present",
+      "note": "nor does a child whose delegation attempt never ran (no execute.after: no such tool)"
+    },
+    {
+      "id": "l7",
+      "close": [
+        [
+          "D",
+          "planner"
+        ]
+      ],
+      "events": [
+        [
+          "session.execution.succeeded",
+          "D"
+        ]
+      ],
+      "lock": "absent",
+      "note": "the root's turn end, after its delegation completed, frees it"
+    },
+    {
+      "id": "l8",
+      "instance": "flaky",
+      "write_locks": true,
+      "fill": [
+        [
+          "F",
+          "planner",
+          1
+        ]
+      ],
+      "events": [
+        [
+          "session.execution.succeeded",
+          "F"
+        ]
+      ],
+      "lock": "absent",
+      "note": "the event loop subscribes again when the first subscribe() throws"
+    }
   ]
 }

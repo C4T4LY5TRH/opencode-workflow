@@ -20,6 +20,24 @@
 ; code later OUTSIDE the sandbox (core.fsmonitor, hooks) when the harness or the human runs git. The human commits.
 (deny file-write* (regex #"/\.harness(/|$)") (regex #"/\.git(/|$)"))
 
+; project docs (spec 7.2 rule 10): each has one owning agent, which writes it with the write/edit tools (they run
+; inside opencode, not in this shell; the agents' edit permissions decide who). No agent shell may create, change,
+; move, link or delete one at the project root, mini-projects/<slug>/<name> (`> PLAN.md`, cp, mv, ln, find -exec,
+; rg --pre ...), in any letter case (macOS names are case-insensitive; this Mac's sandbox also matches paths without
+; case, seen 2026-10-29, and the per-letter classes keep that true where it does not). Deeper files with these names
+; (a build's dist/review.md, a package's node_modules/x/DESIGN.md) are plain files. The sandbox matches the resolved
+; path, so a symlink to the root file is refused too, and so is a hard link (its source is the root file).
+; NOTES.md, LEARNINGS.md and RESEARCH/ stay writable. (gate cases x41-x54)
+(deny file-write*
+  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Bb][Rr][Ii][Ee][Ff]\.[Mm][Dd]$")
+  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Bb][Rr][Aa][Ii][Nn][Ss][Tt][Oo][Rr][Mm]\.[Mm][Dd]$")
+  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Aa][Rr][Cc][Hh][Ii][Tt][Ee][Cc][Tt][Uu][Rr][Ee]\.[Mm][Dd]$")
+  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Dd][Ee][Ss][Ii][Gg][Nn]\.[Mm][Dd]$")
+  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Pp][Ll][Aa][Nn]\.[Mm][Dd]$")
+  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Rr][Ee][Vv][Ii][Ee][Ww]\.[Mm][Dd]$")
+  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Cc][Rr][Ii][Tt][Ii][Qq][Uu][Ee]\.[Mm][Dd]$")
+  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Bb][Uu][Gg][Hh][Uu][Nn][Tt]\.[Mm][Dd]$"))
+
 ; secrets: .env files (not .env.example), keys, credential stores, opencode's own auth + sessions
 (deny file-read*
   (regex #"/\.env$") (regex #"/\.env\.[^/]+$") (regex #"\.pem$")

@@ -19,11 +19,12 @@ BRAIN = os.path.join(WORKSHOP, "brain")
 RULES = os.path.join(BRAIN, "rules")
 RUNTIME = os.path.join(WORKSHOP, ".harness")
 
-AGENTS = ["orchestrator", "planner", "builder", "reviewer", "critic", "researcher", "brain"]
-COMMANDS = ["new", "go", "approve", "ship", "status", "critique", "hunt", "review", "research"]
+AGENTS = ["orchestrator", "brainstormer", "architect", "planner", "builder", "reviewer", "critic", "researcher",
+          "brain"]
+COMMANDS = ["new", "go", "approve", "ship", "status", "critique", "hunt", "review", "research", "brainstorm"]
 SKILLS = ["caveman", "browser", "visual-review", "html2md", "spec", "brain", "verify"]
 # review kit (installed 2026-10-23). These agents have strict machine-read output formats
-# (BUG-n blocks), so they do NOT use the DID/BASIS contract the 7 above carry. (v3: the kit's
+# (BUG-n blocks), so they do NOT use the DID/BASIS contract the 9 above carry. (v3: the kit's
 # code-reviewer is merged into reviewer, which writes REVIEW.md and does carry the contract.)
 KIT_AGENTS = ["hunter", "skeptic"]
 KIT_SKILLS = ["bug-hunt", "code-review"]
@@ -172,6 +173,8 @@ pol_res = {p.get("resource") for p in pol if p.get("effect") == "deny"}
 need_pol = ["execute:*", "shell:*rm -rf /*", "shell:*git reset --hard*", "shell:*curl *--data*",
             "shell:*git *--output*", "shell:*rg *--pre*",   # "read-only" commands that write / execute
             "shell:*find * -exec*", "shell:*-execdir*",
+            # find in a "read-only" shell must not delete or write files (-fprint covers -fprint0/-fprintf)
+            "shell:*find *-delete*", "shell:*find *-fprint*", "shell:*find *-fls*",
             "edit:*.harness/*", "shell:*approve.sh*",     # plan approval is human-only
             "playwright_browser_run_code_unsafe:*",
             # v3: nothing asks the trusting builder, so push and publish are human-only
@@ -255,18 +258,22 @@ def decide(path, rules):
 global_edit = list((perm_map.get("edit") or {}).items()) if isinstance(perm_map.get("edit"), dict) else []
 builder_edit = frontmatter_rules(read(os.path.join(OPEN, "agents", "builder.md")), "edit")
 P = "mini-projects/demo/"
-must_deny = ["PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md", ".env", ".env.local", "config/.env",
-             "prod.env", ".git/config", ".git/hooks/pre-commit"]
+must_deny = ["PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md", "BRIEF.md", "ARCHITECTURE.md", "BRAINSTORM.md",
+             "DESIGN.md", ".env", ".env.local", "config/.env", "prod.env", ".git/config", ".git/hooks/pre-commit"]
 probes = [p for f in must_deny for p in (f, P + f, os.path.join(WORKSHOP, P + f))]
 writable = [p for p in probes if decide(p, global_edit + builder_edit) != "deny"]
 code_ok = decide(P + "src/app.js", global_edit + builder_edit) == "allow"
-check("builder-cannot-write-gate-files", "builder edit denies PLAN/REVIEW/CRITIQUE/BUGHUNT/.env/.git, allows code",
+check("builder-cannot-write-gate-files", "builder edit denies the doc files, .env and .git, allows code",
       bool(builder_edit) and not writable and code_ok,
       ("no edit rules found in builder.md" if not builder_edit else
        ",".join(writable[:6]) + ("" if code_ok else " code write not allowed")))
 
-# --- only the reviewer may write REVIEW.md (the ship gate trusts a REVIEW.md written by a write tool), so
-#     every agent opencode really loaded (custom and built-in) must resolve it to deny, the reviewer to allow
+# --- every doc file has one owner (spec 7.2 rule 10): the ship gate trusts a REVIEW.md written by a write tool,
+#     the plan gate and the approval hash trust BRIEF/ARCHITECTURE/PLAN/CRITIQUE, and the plugin does not know
+#     which agent writes. So every agent opencode really loaded (custom and built-in) must resolve each file to
+#     deny, its owner to allow. DESIGN.md has no owner until the designer arrives (piece 2).
+#     This covers the edit/write tools only. Shell writes (`> PLAN.md`, cp, mv, ln, interpreters) to the project
+#     root's doc files are refused for every agent by scripts/sandbox/agent.sb, proven by gate cases x41-x54 (gates-fire).
 try:
     loaded = json.loads(subprocess.run(["opencode", "debug", "agents"], capture_output=True, text=True,
                                        timeout=60, cwd=WORKSHOP).stdout)
@@ -282,12 +289,29 @@ def resolve(perms, action, resource):
     return eff
 
 
-rv_probes = ["REVIEW.md", P + "REVIEW.md", os.path.join(WORKSHOP, P + "REVIEW.md")]
-rv_bad = [f"{a.get('id')}:{p}={resolve(a.get('permissions', []), 'edit', p)}" for a in loaded for p in rv_probes
-          if resolve(a.get("permissions", []), "edit", p) != ("allow" if a.get("id") == "reviewer" else "deny")]
-check("only-reviewer-writes-review", "no loaded agent but the reviewer may write REVIEW.md",
-      bool(loaded) and any(a.get("id") == "reviewer" for a in loaded) and not rv_bad,
-      "could not run `opencode debug agents`" if not loaded else ",".join(rv_bad[:6]))
+DOC_OWNER = {"REVIEW.md": "reviewer", "BRIEF.md": "brainstormer", "BRAINSTORM.md": "brainstormer",
+             "ARCHITECTURE.md": "architect", "PLAN.md": "planner", "CRITIQUE.md": "critic",
+             "BUGHUNT.md": "orchestrator", "DESIGN.md": None}
+loaded_ids = {a.get("id") for a in loaded}
+no_owner = sorted({o for o in DOC_OWNER.values() if o and o not in loaded_ids})
+own_bad = [f"{a.get('id')}:{p}={resolve(a.get('permissions', []), 'edit', p)}"
+           for a in loaded for f, owner in DOC_OWNER.items() for p in (f, P + f, os.path.join(WORKSHOP, P + f))
+           if resolve(a.get("permissions", []), "edit", p) != ("allow" if a.get("id") == owner else "deny")]
+check("only-owner-writes-docs", "edit tools: each doc file writable by its owner only (shell: sandbox, gate x41-x54)",
+      bool(loaded) and not no_owner and not own_bad,
+      "could not run `opencode debug agents`" if not loaded else
+      ",".join([f"owner not loaded:{o}" for o in no_owner] + own_bad[:6]))
+
+# --- the orchestrator's shell runs status.py in text mode only (digest + file checks, spec H2): --html writes a
+#     file, next.py writes state, `python3 -c` runs anything. Resolved rules as loaded, last match wins.
+orch_perms = next((a.get("permissions", []) for a in loaded if a.get("id") == "orchestrator"), [])
+status_probes = {"python3 scripts/status.py demo": "allow", "python3 scripts/status.py demo --check PLAN.md": "allow",
+                 "python3 scripts/status.py --html": "deny", "python3 scripts/status.py demo --html": "deny",
+                 "python3 scripts/next.py demo": "deny", 'python3 -c "print(1)"': "deny"}
+status_bad = [f"{c}={resolve(orch_perms, 'shell', c)}" for c, want in status_probes.items()
+              if resolve(orch_perms, "shell", c) != want]
+check("orchestrator-status-only", "orchestrator shell: status.py text mode only, no --html, no other python",
+      bool(orch_perms) and not status_bad, "orchestrator not loaded" if not orch_perms else ",".join(status_bad))
 
 # --- plugins present + the gates actually FIRE
 plugins = os.listdir(os.path.join(OPEN, "plugins")) if os.path.isdir(os.path.join(OPEN, "plugins")) else []
@@ -324,10 +348,16 @@ check("plugins-alive", "plugins reported a load heartbeat", bool(alive.strip()) 
 
 # --- template ships NO gate files (else the gates are no-ops in every new project)
 tpl = os.path.join(WORKSHOP, "mini-projects", "_template")
-leak = [f for f in ("PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md") if os.path.isfile(os.path.join(tpl, f))]
+leak = [f for f in ("PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md", "ARCHITECTURE.md", "BRAINSTORM.md", "DESIGN.md")
+        if os.path.isfile(os.path.join(tpl, f))]
 check("template-clean", "template ships no gate files", not leak, ",".join(leak))
 tpl_need = [f for f in ("BRIEF.md", "AGENTS.md", "README.md", "NOTES.md", "LEARNINGS.md")
             if not os.path.isfile(os.path.join(tpl, f))]
+tpl_brief = read(os.path.join(tpl, "BRIEF.md"))  # the v4 layout: the parser needs these two parts to find the gaps
+if tpl_brief and not re.search(r"^## OPEN QUESTIONS\s*$", tpl_brief, re.M):
+    tpl_need.append("BRIEF.md:## OPEN QUESTIONS")
+if tpl_brief and not re.search(r"^- ui:", tpl_brief, re.M):
+    tpl_need.append("BRIEF.md:- ui:")
 check("template-shape", "template has the non-gate scaffold", not tpl_need, ",".join(tpl_need))
 
 # --- no harness files left in the global config dir (would duplicate / shadow)

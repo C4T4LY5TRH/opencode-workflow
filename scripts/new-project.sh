@@ -2,12 +2,15 @@
 # Scaffold a new mini project from the workshop template.
 # Purpose gate lives in the /new command, not here.
 #
-# usage:  new-project.sh - [slug] <<'END'   goal on stdin (what /new runs)
-#    or:  GOAL="<one line goal>" new-project.sh [slug]
-#    or:  new-project.sh "<goal>" [slug]
-# Reading the goal from stdin or the GOAL env var means callers never build a
+# usage:  new-project.sh - [slug] <<'END'   the idea on stdin, all of it, then a line HARNESS_TEXT_COMPLETE
+#                                           (what /new runs)
+#    or:  GOAL="<idea>" new-project.sh [slug]
+#    or:  new-project.sh "<idea>" [slug]
+# Reading the idea from stdin or the GOAL env var means callers never build a
 # shell string out of user text (AUDIT.md P2-1). /new passes it through a quoted
-# heredoc, so quotes, $(...) and ; in a goal stay plain text.
+# heredoc, so quotes, $(...) and ; in an idea stay plain text.
+# The whole idea (every line) becomes {{GOAL}} (spec H13). The slug: an idea that starts
+# with "<slug>: " names the project (H21); else the first line's first 5 words.
 #
 # The template ships NO gate files (PLAN/REVIEW/CRITIQUE/BUGHUNT). They appear only
 # when their owning agent writes them, so the plan and ship gates mean something
@@ -15,7 +18,13 @@
 set -euo pipefail
 
 if [ "${1:-}" = "-" ]; then
-  GOAL="$(head -n 1 | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  GOAL="$(cat)"
+  # /new's heredoc ends with this marker line. opencode ends the shell block at a backtick in the idea, before the
+  # marker: refuse rather than create a project from a fragment (R40).
+  case "$GOAL" in
+    HARNESS_TEXT_COMPLETE|*$'\n'HARNESS_TEXT_COMPLETE) GOAL="${GOAL%HARNESS_TEXT_COMPLETE}" ;;
+    *) echo "ERROR: the text was cut at a backtick; type it again without backticks" >&2; exit 2 ;;
+  esac
   SLUG="${2:-}"
 elif [ -n "${GOAL:-}" ]; then
   SLUG="${1:-}"
@@ -23,9 +32,18 @@ else
   GOAL="${1:-}"
   SLUG="${2:-}"
 fi
+GOAL="${GOAL#"${GOAL%%[![:space:]]*}"}"   # trim the whole text, keep its lines as typed
+GOAL="${GOAL%"${GOAL##*[![:space:]]}"}"
+
+TOKEN="${GOAL%%[[:space:]]*}"
+if [ -z "$SLUG" ] && [[ "$TOKEN" =~ ^[a-z0-9][a-z0-9_-]*:$ ]]; then
+  SLUG="${TOKEN%:}"
+  GOAL="${GOAL#"$TOKEN"}"
+  GOAL="${GOAL#"${GOAL%%[![:space:]]*}"}"
+fi
 
 if [ -z "$GOAL" ]; then
-  echo "usage: /new <one line goal>    (script: new-project.sh - [slug] <<< \"<goal>\")" >&2
+  echo "usage: /new <your idea, any length>   or   /new <slug>: <idea>    (script: new-project.sh - [slug] <<< \"<idea>\")" >&2
   exit 2
 fi
 
@@ -41,7 +59,7 @@ if [ ! -d "$TEMPLATE" ]; then
 fi
 
 if [ -z "$SLUG" ]; then
-  SLUG="$(printf '%s' "$GOAL" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -d- -f1-5)"
+  SLUG="$(printf '%s' "${GOAL%%$'\n'*}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -d- -f1-5)"
 fi
 [ -z "$SLUG" ] && SLUG="project"
 case "$SLUG" in
@@ -90,4 +108,6 @@ fi
 
 echo "created: $DIR"
 echo "files:   $(cd "$DIR" && ls -A | tr '\n' ' ')"
-echo "next:    /go $SLUG"
+# the orchestrator's brainstorm relay keys on this line: the human's next replies answer the brainstormer
+echo "PHASE: BRAINSTORM"
+echo "next: answer the brainstormer's questions; when happy, /go $SLUG"

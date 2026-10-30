@@ -27,11 +27,11 @@ Home: `~/Projects/opencode/brain/` (workshop repo, tracked in git)
 - 000-core - always on: verify before claim, no scope creep, ask when unsure, small diffs, cite sources
 - 010-voice - caveman rules for output
 - 015-enforcement - gates live in code not prompts; never work around a refusal
-- 020-gates - the v3 gates: approval, plan gate, step checks, fresh SHIP review, confinement, push/publish human-only
+- 020-gates - the v4 gates: purpose, brief lock, design chain + critique, one approval hash, plan gate, step checks, fresh SHIP review, confinement, limits (2 attempts, 16 delegations, 30-minute lock), push/publish human-only
 - 030-research - how to gather and cite facts
 - 040-learning - promotion bar, rule lifecycle, decay (/ship drafts, /status brain shows DECAY)
-- 050-mini-project - project files (PLAN with SCOPE, REVIEW with blind spots), state.json, nested git repo
-- 060-ops - platform gotchas: project-local install, permission order, saved approvals, headless runs, $PWD, agent-shell sandbox, model/frontmatter/$ARGUMENTS traps
+- 050-mini-project - project files (BRIEF, ARCHITECTURE, PLAN, CRITIQUE, REVIEW and their formats), state.json, nested git repo
+- 060-ops - platform gotchas: project-local install, nested checkouts, permission order, saved approvals, headless runs, $PWD, agent-shell sandbox, delegation events, model/frontmatter/$ARGUMENTS traps
 
 - `prompts/010-output-contract.md` - how you report back (DID / PROOF / BLOCKED / NEXT)
 - `prompts/020-gate-contract.md` - what to do when a gate refuses

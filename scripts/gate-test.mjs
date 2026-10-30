@@ -4,12 +4,14 @@
 //
 //   node scripts/gate-test.mjs        (Node 22+ runs the .ts plugin directly)
 //
-// Scope: what the PLUGIN owns (ship gate, plan gate + approval, write confinement, step/review recording),
+// Scope: what the PLUGIN owns (ship gate, plan gate + approval, write confinement, step/review recording,
+// v4: the circuit breaker, one delegation at a time, the /go lock clean-up at a delegating turn's end),
 // scripts/approve.sh (the only writer of the approval the plan gate reads), and the
 // OS sandbox for agent shells (shell hook + scripts/sandbox/, run for real; macOS),
 // brain-log's rule-usage telemetry, and the decay verdict of scripts/rule-report.py.
 // Destructive commands are the policy layer's job; scripts/bench.py checks those.
 import { spawnSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import fs from "node:fs"
 import net from "node:net"
 import path from "node:path"
@@ -67,27 +69,61 @@ process.on("exit", () => { for (const d of sockDirs) fs.rmSync(d, { recursive: t
 const APPROVE = path.join(root, "scripts", "approve.sh")
 fs.mkdirSync(path.dirname(APPROVE), { recursive: true })
 fs.copyFileSync(path.resolve(HERE, "approve.sh"), APPROVE)
-fs.copyFileSync(path.resolve(HERE, "harness_state.py"), path.join(path.dirname(APPROVE), "harness_state.py")) // approve.sh execs it from its own dir
+for (const f of ["harness_state.py", "harness_docs.py"]) fs.copyFileSync(path.resolve(HERE, f), path.join(path.dirname(APPROVE), f)) // approve.sh execs harness_state.py from its own dir; it imports harness_docs.py
 const human = { ...process.env }
 delete human.AGENT
 delete human.OPENCODE_SESSION_ID
 const approve = (slug, env = human) => spawnSync("bash", [APPROVE, slug], { env, encoding: "utf8" })
+// /approve is the v4 approval now: BRIEF + ARCHITECTURE + PLAN (milestone M1, step 1 proves R1) and a critique round
+// for M1 whose serious point is answered, with the brief locked (the lock is a library call, no CLI verb: ruling P9).
+const V4_BRIEF = "# BRIEF - fixture\n## SUMMARY\nA fixture.\n## WHERE IT RUNS\n- ui: no\n## FEATURES\n- F1 [MUST] it runs\n## OPEN QUESTIONS\n- none\n"
+const V4_ARCH = "# ARCHITECTURE - fixture\n## SUMMARY\nA fixture.\n## RISKS\n- R1: it may not run - test: run it once\n" +
+  "## DECISIONS\n- D1: plain files - rejected: a database - why: nothing to store\n## MILESTONES\n- M1: it runs - covers: F1\n" +
+  "## CRITIQUE ANSWERS\n- C1: fixed - see D1\n"
+const V4_CRITIQUE = "# CRITIQUE - fixture\n## SUMMARY\nOne point.\n## ROUND 1 - M1\n- C1 [serious] [architecture] the strongest case against - fix: see D1\n"
+const v4Plan = (steps) => "# PLAN - fixture\n## SUMMARY\nOne milestone.\n## MILESTONE\nM1: it runs\n## SCOPE\nIN: x\n## STEPS\n" +
+  steps.map(([title, files, check], i) => `### ${i + 1}. ${title}\n- files: ${files}\n- covers: ${i === 0 ? "F1" : "none"}\n` +
+    `${i === 0 ? "- proves: R1\n" : ""}- done when: \`${check}\`\n`).join("") + "## ACCEPTANCE\nit runs\n"
+function v4Project(dir, steps) {
+  for (const [name, body] of [["BRIEF.md", V4_BRIEF], ["ARCHITECTURE.md", V4_ARCH], ["CRITIQUE.md", V4_CRITIQUE], ["PLAN.md", v4Plan(steps)]]) {
+    fs.writeFileSync(path.join(dir, name), body)
+  }
+  const lock = spawnSync("python3", ["-c", "import sys; sys.dont_write_bytecode=True; sys.path.insert(0, sys.argv[1]); " +
+    "import harness_state as hs; ok, msg = hs.lock_brief(sys.argv[2], 't'); sys.exit(0 if ok else msg)",
+    path.dirname(APPROVE), dir], { encoding: "utf8" })
+  if (lock.status !== 0) throw new Error(`lock_brief failed for ${dir}: ${lock.stderr}`)
+}
 for (const proj of spec.approve) {
+  v4Project(path.join(root, proj), [["hello", "hello.txt", "true"]])
   const r = approve(path.basename(proj))
-  if (r.status !== 0) throw new Error(`approve.sh failed for ${proj}: ${r.stderr}`)
+  if (r.status !== 0) throw new Error(`approve.sh failed for ${proj}: ${r.stdout} ${r.stderr}`)
+}
+// one project stays in v3 mode: a recorded plan hash and steps, no brief lock and no ARCHITECTURE.md (Task 7 uses it)
+{
+  const dir = path.join(root, "mini-projects", "v3mode")
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true })
+  const plan = "## SCOPE\nIN: x\n## STEPS\n### 1. hello\n- files: hello.txt\n- done when: `true`\n## ACCEPTANCE\nit runs\n"
+  fs.writeFileSync(path.join(dir, "PLAN.md"), plan)
+  fs.mkdirSync(path.join(dir, ".harness"), { recursive: true })
+  fs.writeFileSync(path.join(dir, ".harness", "state.json"), JSON.stringify({
+    plan_sha256: createHash("sha256").update(plan).digest("hex"), approved_at: "t", fix_rounds: 0,
+    steps: [{ n: 1, title: "hello", files: ["hello.txt"], check: "true", done_at: null, attempts: 0, last_failure: null }],
+  }))
 }
 // step-recording projects: a 2-step plan (check 1 exits 0, check 2 exits 1), approved, with one code file;
 // stepr also has a REVIEW.md that says SHIP
-const STEP_PLAN = "## SCOPE\nIN: x\n## STEPS\n### 1. pass\n- files: src/a.js\n- done when: `node -e \"process.exit(0)\"`\n" +
-  "### 2. fail\n- files: src/a.js\n- done when: `node -e \"process.exit(1)\"`\n## ACCEPTANCE\nit runs\n"
+const STEP_STEPS = [["pass", "src/a.js", 'node -e "process.exit(0)"'], ["fail", "src/a.js", 'node -e "process.exit(1)"']]
 for (const slug of spec.steps.projects) {
   const dir = path.join(root, "mini-projects", slug)
   fs.mkdirSync(path.join(dir, "src"), { recursive: true })
-  fs.writeFileSync(path.join(dir, "PLAN.md"), STEP_PLAN)
+  v4Project(dir, STEP_STEPS)
   fs.writeFileSync(path.join(dir, "src", "a.js"), "one\n")
   if (slug === "stepr") fs.writeFileSync(path.join(dir, "REVIEW.md"), "## VERDICT: SHIP\n")
   const r = approve(slug)
-  if (r.status !== 0) throw new Error(`approve.sh failed for ${slug}: ${r.stderr}`)
+  if (r.status !== 0) throw new Error(`approve.sh failed for ${slug}: ${r.stdout} ${r.stderr}`)
+  // the critique was needed to approve; the approval hash does not cover it, and case c3 (a write to critique.md is an
+  // alias of CRITIQUE.md) means something only while no CRITIQUE.md exists in stepa
+  fs.rmSync(path.join(dir, "CRITIQUE.md"))
 }
 for (const proj of spec.edit_after_approve) fs.appendFileSync(path.join(root, proj, "PLAN.md"), "step added later\n")
 // symlinks an agent shell could make inside its project (the write tools follow them)
@@ -130,8 +166,24 @@ for (const [id, r, slug, note] of scriptCases) {
 // which writes the fixture's .harness/dashboard.html (the plugin reads the variable once, at load)
 const STATUS_COPY = path.join(root, "scripts", "status.py")
 fs.copyFileSync(path.resolve(HERE, "status.py"), STATUS_COPY)
+fs.copyFileSync(path.resolve(HERE, "next.py"), path.join(path.dirname(STATUS_COPY), "next.py")) // status.py imports next.py (the routing map) from its own dir
 process.env.HARNESS_TEST_STATUS_PY = STATUS_COPY
 const plugin = (await import(pathToFileURL(PLUGIN).href)).default
+// a fake ctx.event bus: every subscribe() gets its own queue, pushEvent(e) delivers e to all of them (the real bus
+// is global too: every plugin instance sees every session's events)
+const subscribers = new Set()
+const pushEvent = (e) => { for (const s of subscribers) s(e) }
+const subscribe = () => ({
+  [Symbol.asyncIterator]() {
+    const queue = [], waiting = []
+    const deliver = (e) => { const w = waiting.shift(); if (w) w({ value: e, done: false }); else queue.push(e) }
+    subscribers.add(deliver)
+    return {
+      next: () => (queue.length ? Promise.resolve({ value: queue.shift(), done: false }) : new Promise((r) => waiting.push(r))),
+      return: () => { subscribers.delete(deliver); return Promise.resolve({ value: undefined, done: true }) },
+    }
+  },
+})
 const hooksFor = new Map()
 async function hooks(session) {
   if (hooksFor.has(session)) return hooksFor.get(session)
@@ -141,7 +193,7 @@ async function hooks(session) {
     tool: { hook: async (n, cb) => { h[n] = cb } },
     shell: { hook: async (n, cb) => { h[`shell.${n}`] = cb } },
     session: { hook: async () => {} },
-    event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {} }) },
+    event: { subscribe },
   })
   hooksFor.set(session, h)
   return h
@@ -155,8 +207,14 @@ for (const proj of spec.review_after_approve) {
   })
 }
 
-for (const c of spec.cases) {
+for (const c of [...spec.cases, ...spec.v4docs.map((v) => ({ ...v, id: `v4docs/${v.id}` }))]) {
   const h = await hooks(c.session)
+  // v4docs cases may change the project first: append to a file, or set keys in its state.json
+  if (c.append) fs.appendFileSync(path.join(root, c.append.file), c.append.text)
+  if (c.state) {
+    const f = path.join(root, c.state.project, ".harness", "state.json")
+    fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, "utf8")), ...c.state.set }))
+  }
   const input = JSON.parse(JSON.stringify(c.input).replaceAll("$ROOT_CASE", ROOT_CASE).replaceAll("$ROOT", root))
   let got = "allow", msg = ""
   try {
@@ -168,6 +226,77 @@ for (const c of spec.cases) {
   // message_has pins WHICH gate refused (a block for the wrong reason is a failure)
   const why = c.message_has && got === "block" && !msg.includes(c.message_has)
   report(c.id, got === c.expect && !why, c.expect, got, `${c.note}${why ? " :: wrong reason: " + msg.slice(0, 80) : ""}`)
+}
+
+// delegations (spec 7.2 rules 7-8, rulings R8/P7/P8): replay delegation-tool calls and turn events through the
+// workshop-root plugin instance. Session ids carry the section name, so no section sees another's counts.
+// An op runs, in order: write_locks, fill (calls that must all pass), full (the session must now be at the cap),
+// open (a call with no execute.after yet), close (its execute.after), events, then the checked calls / lock files.
+// A call may carry extra input ([session, agent, n, {background: true}]). "instance": "flaky" runs the op on a plugin
+// instance whose first ctx.event.subscribe() throws (the loop must subscribe again).
+let callNo = 0
+const flaky = {}
+{
+  let tries = 0
+  await plugin.setup({
+    location: { directory: root },
+    tool: { hook: async (n, cb) => { flaky[n] = cb } },
+    shell: { hook: async (n, cb) => { flaky[`shell.${n}`] = cb } },
+    session: { hook: async () => {} },
+    event: { subscribe: () => { if (tries++ === 0) throw new Error("no stream yet"); return subscribe() } },
+  })
+}
+for (const section of ["breaker", "parallel", "lock"]) {
+  let h = await hooks("")
+  const rootHooks = h
+  const ev = (s, agent, extra = {}) => ({
+    tool: "subagent", input: { agent, description: "x", prompt: "x", ...extra }, agent: "orchestrator",
+    sessionID: `${section}:${s}`, id: `call_${++callNo}`, messageID: "m",
+  })
+  const before = async (e) => {
+    try { await h["execute.before"](e); return "" } catch (err) { return String(err?.message ?? err) || "refused" }
+  }
+  const after = (e, status = "completed") =>
+    h["execute.after"]?.(status === "error" ? { ...e, status, error: new Error("x") } : { ...e, status, result: { output: "ok" } })
+  const open = new Map()
+  for (const op of spec[section]) {
+    const problems = []
+    h = op.instance === "flaky" ? flaky : rootHooks
+    if (op.write_locks) for (const f of spec.lock_files) fs.writeFileSync(path.join(root, f), JSON.stringify({ stage: "PLAN", at: "t" }))
+    for (const [s, agent, n] of op.fill ?? []) {
+      for (let i = 0; i < n; i++) {
+        const e = ev(s, agent), msg = await before(e)
+        if (msg) { problems.push(`fill refused: ${msg.slice(0, 60)}`); break }
+        await after(e)
+      }
+    }
+    if (op.full && !(await before(ev(op.full, "probe"))).includes("circuit breaker")) problems.push(`${op.full} is not at the cap`)
+    for (const [s, agent] of op.open ?? []) {
+      const e = ev(s, agent), msg = await before(e)
+      if (msg) problems.push(`open refused: ${msg.slice(0, 60)}`)
+      open.set(`${s}/${agent}`, e)
+    }
+    for (const [s, agent, status] of op.close ?? []) await after(open.get(`${s}/${agent}`), status)
+    for (const [type, s] of op.events ?? []) pushEvent({ id: `evt_${++callNo}`, type, created: Date.now(), data: { sessionID: `${section}:${s}` } })
+    if (op.events) await new Promise((r) => setTimeout(r, 20)) // the plugin's event loop runs between ticks
+    let got = "allow", msg = ""
+    for (const [s, agent, n, extra] of op.calls ?? []) {
+      for (let i = 0; i < n && got === "allow"; i++) {
+        const e = ev(s, agent, extra)
+        msg = await before(e)
+        if (msg) got = "block"
+        else await after(e)
+      }
+    }
+    if (op.calls && got !== op.expect) problems.push(`got ${got}${msg ? ": " + msg.slice(0, 80) : ""}`)
+    else if (op.calls && op.message_has && !msg.includes(op.message_has)) problems.push(`wrong reason: ${msg.slice(0, 120)}`)
+    for (const f of op.lock ? spec.lock_files : []) {
+      if (fs.existsSync(path.join(root, f)) !== (op.lock === "present")) problems.push(`${f} ${op.lock === "present" ? "is gone" : "is still there"}`)
+    }
+    for (const f of op.kept ?? []) if (!fs.existsSync(path.join(root, f))) problems.push(`${f} was deleted`)
+    const exp = op.expect ?? op.lock
+    report(`${section}/${op.id}`, problems.length === 0, exp, problems.length ? "wrong" : exp, `${op.note}${problems.length ? " :: " + problems.join("; ") : ""}`)
+  }
 }
 // sandbox: run each command the way opencode would after the shell hook (AGENT=1 marks agent shells)
 for (const c of spec.sandbox) {
@@ -313,6 +442,6 @@ okCase("d1", rep.status === 0 && spec.decay.decay.every((r) => line(r).includes(
 okCase("d2", rep.status === 0 && spec.decay.keep.every((r) => line(r) && !line(r).includes("DECAY")),
   "rule-report: recently used or always-on rules are kept")
 
-const total = spec.cases.length + scriptCases.length + spec.sandbox.length + spec.steps.ops.length + 1 + 5 + 2
+const total = spec.cases.length + spec.v4docs.length + spec.breaker.length + spec.parallel.length + spec.lock.length + scriptCases.length + spec.sandbox.length + spec.steps.ops.length + 1 + 5 + 2
 console.log(`\ngate-test: ${total - fail}/${total} passed`)
 process.exit(fail ? 1 : 0)

@@ -1,9 +1,9 @@
 ---
-description: Optional second opinion on a project - the strongest case against it plus failure scenarios. Writes CRITIQUE.md.
+description: One more critic round on a project's current plan (the strongest case against it, holes, failure scenarios), then the answers. Adds a ROUND to CRITIQUE.md.
 agent: orchestrator
 ---
-Project: "$ARGUMENTS". If no project slug is given: ask the human for one. Stop.
+Project "$ARGUMENTS". The routing script already ran when the human typed this command; its contract:
 
-Delegate: @critic read mini-projects/$ARGUMENTS (PLAN.md, BRIEF.md, any code) and write mini-projects/$ARGUMENTS/CRITIQUE.md: the strongest honest case against it, the assumption that breaks it, and the failure scenarios (scale, misuse, dependency dies, time, money) with cheap hedges.
-After: show the KILL CASE in two lines, the assumption that breaks it, and the cheapest hedge. Ask the human: keep, shrink, or kill.
-Handoff check: after the worker reports, run `ls mini-projects/$ARGUMENTS/CRITIQUE.md`. If it is missing, the worker did not write it: send it back once with "write CRITIQUE.md now, then report". Never tell the human a file exists unless ls shows it.
+!`python3 scripts/next.py --critique "$ARGUMENTS" && python3 scripts/status.py --html >/dev/null 2>&1; true`
+
+Do the numbered INSTRUCTION items in order, one worker call per item, each followed by its check; stop at the first check that is still not exactly OK after one send-back, then run only the last item. If AGENT is none, relay the message. End with STATUS and NEXT COMMAND verbatim; after a chain, with the final status output's stage line and next: line instead (usually /approve <slug> or /critique <slug>).

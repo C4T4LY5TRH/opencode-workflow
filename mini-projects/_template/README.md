@@ -3,17 +3,18 @@
 {{GOAL}}
 
 ## How this project moves through the harness
-One command drives it: `/go {{SLUG}}`. It does the next thing and stops. The gates check for the files below, so
-they appear only when their agent writes them.
+Answer the brainstormer in chat, then `/go {{SLUG}}` does the next thing and stops. The gates check for the files
+below, so they appear only when their agent writes them.
 
 | Step | Command | Writes |
 |---|---|---|
-| purpose | `/new` | `BRIEF.md` (this scaffold) |
-| plan | `/go {{SLUG}}` | `PLAN.md` (scope + numbered steps, each with a check) |
-| approve | `/approve {{SLUG}}` | you read PLAN.md and approve it (recorded) |
-| build | `/go {{SLUG}}`, once per step | code; a step is done when its check passes |
+| idea | `/new` | `BRIEF.md` (a first draft with questions; this scaffold until then) |
+| brainstorm | answer in chat, or `/brainstorm {{SLUG}} [topic]` | `BRIEF.md` (rounds until you are happy), `BRAINSTORM.md` for a topic |
+| design | `/go {{SLUG}}` | locks the brief, then `ARCHITECTURE.md`, `PLAN.md` (one milestone) and a `CRITIQUE.md` round with its answers |
+| decide | `/approve {{SLUG}}` or `/critique {{SLUG}}` | you read the digest: approve it (recorded) or ask for one more critic round |
+| build | `/go {{SLUG}}`, once per step | code; a step is done when its check passes (step 1 spikes the riskiest part) |
 | review | `/go {{SLUG}}` after the last step | `REVIEW.md` (verdict and blind spots) |
-| ship | `/ship {{SLUG}}` | a commit, after you say yes |
+| ship | `/ship {{SLUG}}` | records the milestone; you commit; the next `/go` plans the next milestone |
 
 `/status {{SLUG}}` shows where it is. `NOTES.md` is the running log. `LEARNINGS.md` is what this project teaches the
 brain (`/ship` drafts a proposal from it).

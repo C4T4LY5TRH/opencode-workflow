@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""Parsers for the v4 project documents (BRIEF, ARCHITECTURE, PLAN, CRITIQUE) and the answer lines.
+
+Stdlib only, no imports from other harness modules. Every DocError message starts with the file name and
+names the exact line or id, because it is fed back verbatim to the agent that wrote the file.
+"""
+import re
+
+
+class DocError(ValueError):
+    pass
+
+
+class PlanError(DocError):
+    pass
+
+
+ANSWER_FILE = {"architecture": "ARCHITECTURE.md", "brief": "ARCHITECTURE.md", "plan": "PLAN.md", "design": "DESIGN.md"}
+
+# Separator between the parts of an ids line: em dash, en dash, or a spaced hyphen.
+SEP = r"(?:\s*[—–]\s*|\s+-\s+)"
+
+
+def _lines(text):
+    return [l.rstrip() for l in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+
+
+def _norm(heading):
+    h = re.sub(r"\s+", " ", heading.strip())
+    return h.rstrip(":").strip().upper()
+
+
+def sections(text):
+    """'## ' headings (normalised) -> their lines. First occurrence wins."""
+    out, cur = {}, None
+    for l in _lines(text):
+        m = re.match(r"^##(?!#)\s+(.*)$", l)
+        if m:
+            cur = _norm(m.group(1))
+            if cur in out:
+                cur = None  # a repeated heading never overrides the first
+            else:
+                out[cur] = []
+        elif cur is not None:
+            out[cur].append(l)
+    return out
+
+
+def check_summary(text, name):
+    secs = sections(text)
+    if not secs or next(iter(secs)) != "SUMMARY":
+        raise DocError(f"{name}: the first '## ' section must be '## SUMMARY' (1 to 5 lines)")
+    n = len([l for l in secs["SUMMARY"] if l.strip()])
+    if n == 0:
+        raise DocError(f"{name}: '## SUMMARY' is empty (write 1 to 5 lines)")
+    if n > 5:
+        raise DocError(f"{name}: '## SUMMARY' has {n} lines (the limit is 5)")
+
+
+def _bullets(lines):
+    return [l for l in lines if l.strip()]
+
+
+def _ids(raw, prefix, who):
+    """'F1, F3' / 'f1 f3' / 'none' -> ['F1', 'F3']. Raises DocError naming a bad token."""
+    raw = raw.strip().strip("`").strip()
+    if not raw or raw.lower().rstrip(".") == "none":
+        return []
+    out = []
+    for tok in [t for t in re.split(r"[,\s]+", raw) if t]:
+        if not re.fullmatch(rf"{prefix}\d+", tok, re.I):
+            raise DocError(f"{who}: '{tok}' is not a {prefix}<n> id")
+        out.append(tok.upper())
+    return out
+
+
+# --- BRIEF.md ------------------------------------------------------------------------------------
+
+def parse_brief(text):
+    name = "BRIEF.md"
+    check_summary(text, name)
+    secs = sections(text)
+    if "WHERE IT RUNS" not in secs:
+        raise DocError(f"{name}: no '## WHERE IT RUNS' section")
+    ui = None
+    for l in secs["WHERE IT RUNS"]:
+        m = re.match(r"^\s*[-*]\s*ui\s*:\s*(yes|no)\s*\.?\s*$", l, re.I)
+        if m:
+            ui = m.group(1).lower() == "yes"
+    if ui is None:
+        raise DocError(f"{name}: '## WHERE IT RUNS' has no '- ui: yes' or '- ui: no' line")
+    if "FEATURES" not in secs:
+        raise DocError(f"{name}: no '## FEATURES' section")
+    features, seen = [], set()
+    for l in _bullets(secs["FEATURES"]):
+        m = re.match(r"^\s*[-*]\s*(F\d+)\s*\[(MUST|SHOULD|LATER)\]\s*:?\s*(.*)$", l, re.I)
+        if not m:
+            raise DocError(f"{name}: FEATURES line is not '- F<n> [MUST|SHOULD|LATER] <text>': {l.strip()}")
+        fid = m.group(1).upper()
+        if fid in seen:
+            raise DocError(f"{name}: feature id {fid} appears twice")
+        seen.add(fid)
+        features.append({"id": fid, "priority": m.group(2).upper(), "text": m.group(3).strip()})
+    if not features:
+        raise DocError(f"{name}: '## FEATURES' has no features (write '- F1 [MUST] <feature>')")
+    if not any(f["priority"] == "MUST" for f in features):
+        raise DocError(f"{name}: no feature is [MUST] (at least one is required)")
+    if "OPEN QUESTIONS" not in secs:
+        raise DocError(f"{name}: no '## OPEN QUESTIONS' section (write '- none' when there are none)")
+    questions = []
+    for l in _bullets(secs["OPEN QUESTIONS"]):
+        s = re.sub(r"^\s*[-*]\s*", "", l).strip()
+        s = s[:-1].strip() if s.endswith(".") else s
+        if s and s.lower() != "none":
+            questions.append(l.strip())
+    return {"features": features, "ui": ui, "open_questions": questions}
+
+
+# --- answers -------------------------------------------------------------------------------------
+
+def parse_answers(text, name="file"):
+    """'## CRITIQUE ANSWERS' -> {"C3": ("rejected", "needs /brainstorm")}."""
+    out = {}
+    for l in _bullets(sections(text).get("CRITIQUE ANSWERS", [])):
+        if not re.match(r"^\s*[-*]\s*C\d+\b", l, re.I):
+            continue
+        m = re.match(rf"^\s*[-*]\s*(C\d+)\s*:\s*(fixed|rejected){SEP}(\S.*)$", l, re.I)
+        if not m:
+            raise DocError(f"{name}: CRITIQUE ANSWERS line is not '- C<n>: fixed|rejected — <reason>': {l.strip()}")
+        out[m.group(1).upper()] = (m.group(2).lower(), m.group(3).strip())
+    return out
+
+
+# --- ARCHITECTURE.md -----------------------------------------------------------------------------
+
+def parse_architecture(text, feature_ids, must_ids):
+    name = "ARCHITECTURE.md"
+    check_summary(text, name)
+    secs = sections(text)
+
+    risks, rids = [], set()
+    for l in _bullets(secs.get("RISKS", [])):
+        if not re.match(r"^\s*[-*]\s*R\d+\b", l, re.I):
+            continue
+        m = re.match(rf"^\s*[-*]\s*(R\d+)\s*:\s*(.*?)(?:{SEP}test\s*:\s*(\S.*))?$", l, re.I)
+        if not m:
+            raise DocError(f"{name}: RISKS line is not '- R<n>: <risk> — test: <spike>': {l.strip()}")
+        rid = m.group(1).upper()
+        if rid in rids:
+            raise DocError(f"{name}: risk id {rid} appears twice")
+        if rid == "R1" and not m.group(3):
+            raise DocError(f"{name}: R1 needs '— test: <smallest spike>': {l.strip()}")
+        rids.add(rid)
+        risks.append({"id": rid, "text": m.group(2).strip(), "test": (m.group(3) or "").strip()})
+    if "R1" not in rids:
+        raise DocError(f"{name}: RISKS has no R1 (write '- R1: <risk> — test: <smallest spike>')")
+
+    for l in _bullets(secs.get("DECISIONS", [])):
+        if re.match(r"^\s*[-*]\s*D\d+\b", l, re.I) and not re.match(
+                rf"^\s*[-*]\s*D\d+\s*:\s*.+?{SEP}rejected\s*:\s*.+?{SEP}why\s*:\s*\S", l, re.I):
+            raise DocError(f"{name}: DECISIONS line is not '- D<n>: <choice> — rejected: <x> — why: <y>': {l.strip()}")
+
+    milestones, mids, owner = [], [], {}
+    for l in _bullets(secs.get("MILESTONES", [])):
+        if not re.match(r"^\s*[-*]\s*M\d+\b", l, re.I):
+            continue
+        m = re.match(rf"^\s*[-*]\s*(M\d+)\s*:\s*(.*?){SEP}covers\s*:\s*(.*)$", l, re.I)
+        if not m:
+            raise DocError(f"{name}: MILESTONES line is not '- M<n>: <title> — covers: F1, F2': {l.strip()}")
+        mid = m.group(1).upper()
+        if mid in mids:
+            raise DocError(f"{name}: milestone id {mid} appears twice")
+        covers = _ids(m.group(3), "F", f"{name}: milestone {mid}")
+        for f in covers:
+            if f not in feature_ids:
+                raise DocError(f"{name}: milestone {mid} covers {f}, which is not a feature in BRIEF.md")
+            if f in owner:
+                raise DocError(f"{name}: feature {f} is in two milestones ({owner[f]} and {mid})")
+            owner[f] = mid
+        mids.append(mid)
+        milestones.append({"id": mid, "title": m.group(2).strip(), "covers": covers})
+    if not milestones:
+        raise DocError(f"{name}: MILESTONES has no milestones (write '- M1: <title> — covers: F1')")
+    for i, mid in enumerate(mids, start=1):
+        if mid != f"M{i}":
+            raise DocError(f"{name}: milestones must run M1..Mn with no gaps; expected M{i}, found {mid}")
+    for f in sorted(must_ids):
+        if f not in owner:
+            raise DocError(f"{name}: MUST feature {f} is in no milestone")
+    return {"risks": risks, "milestones": milestones,
+            "answers": parse_answers(text, name), "feature_ids": set(feature_ids)}
+
+
+# --- PLAN.md -------------------------------------------------------------------------------------
+
+def parse_plan(text):
+    """PLAN.md text -> [{"n", "title", "files", "check", "covers", "proves"}]. Raises PlanError naming what is wrong."""
+    lines = _lines(text)
+    start = next((i for i, l in enumerate(lines) if re.match(r"^##\s+STEPS\s*$", l, re.I)), None)
+    if start is None:
+        raise PlanError("PLAN.md has no '## STEPS' section")
+    body = []
+    for l in lines[start + 1:]:
+        if re.match(r"^##\s", l):  # next section
+            break
+        body.append(l)
+
+    blocks = []  # [number, title, [lines]]
+    for l in body:
+        m = re.match(r"^###\s+(\d+)\.\s+(.+)$", l)
+        if m:
+            blocks.append([int(m.group(1)), m.group(2).strip(), []])
+        elif re.match(r"^###(\s|$)", l):
+            raise PlanError(f"malformed step heading '{l}' (use '### <n>. <title>')")
+        elif blocks:
+            blocks[-1][2].append(l)
+    if not blocks:
+        raise PlanError("no steps found under '## STEPS' (each step is '### 1. <title>')")
+
+    steps = []
+    for idx, (n, title, rest) in enumerate(blocks, start=1):
+        if n != idx:
+            raise PlanError(f"step {n} ('{title}') is out of order: expected step {idx} (steps run 1..N with no gaps)")
+        who = f"step {n} ('{title}')"
+        files, checks, covers, proves = [], [], [], None
+        for l in rest:
+            m = re.match(r"^\s*[-*]\s*(files|done when|covers|proves)\s*:\s*(.*)$", l, re.I)
+            if not m:
+                continue
+            key = m.group(1).lower()
+            if key == "files":
+                files = [f.strip().strip("`").strip() for f in m.group(2).split(",")]
+                files = [f for f in files if f]
+            elif key == "covers":
+                try:
+                    covers = _ids(m.group(2), "F", f"PLAN.md {who}")
+                except DocError as exc:
+                    raise PlanError(str(exc))
+            elif key == "proves":
+                try:
+                    ids = _ids(m.group(2), "R", f"PLAN.md {who}")
+                except DocError as exc:
+                    raise PlanError(str(exc))
+                proves = ids[0] if ids else None
+            else:
+                checks.append(m.group(2).strip())
+        if not checks:
+            raise PlanError(f"{who} has no 'done when:' line")
+        if len(checks) > 1:
+            raise PlanError(f"{who} has more than one 'done when:' line")
+        raw = checks[0]
+        m = re.fullmatch(r"`([^`]+)`", raw)
+        if not m or not m.group(1).strip():
+            raise PlanError(f"{who}: 'done when' needs exactly one command inside one pair of backticks, got: {raw or '(empty)'}")
+        steps.append({"n": n, "title": title, "files": files, "check": m.group(1).strip(),
+                      "covers": covers, "proves": proves})
+    return steps
+
+
+def plan_milestone(text):
+    """First non-empty line of '## MILESTONE' ('M1: title') -> 'M1', or None."""
+    for l in sections(text).get("MILESTONE", []):
+        if l.strip():
+            m = re.match(r"^\s*(M\d+)\s*:", l, re.I)
+            return m.group(1).upper() if m else None
+    return None
+
+
+def check_plan(text, arch, milestone):
+    name = "PLAN.md"
+    check_summary(text, name)
+    got = plan_milestone(text)
+    if got is None:
+        raise DocError(f"{name}: no '## MILESTONE' section with a first line 'M<n>: <title>' (expected {milestone})")
+    if got != milestone:
+        raise DocError(f"{name}: the plan is for {got} but the current milestone is {milestone}")
+    try:
+        steps = parse_plan(text)
+    except PlanError as exc:
+        msg = str(exc)
+        raise DocError(msg if msg.startswith("PLAN.md") else f"PLAN.md: {msg}")
+    risk_ids = {r["id"] for r in arch["risks"]}
+    for s in steps:
+        for f in s["covers"]:
+            if f not in arch["feature_ids"]:
+                raise DocError(f"{name}: step {s['n']} covers {f}, which is not a feature in BRIEF.md")
+        if s["proves"] is not None and s["proves"] not in risk_ids:
+            raise DocError(f"{name}: step {s['n']} proves {s['proves']}, which is not a risk in ARCHITECTURE.md")
+    if milestone == "M1" and steps[0]["proves"] != "R1":
+        raise DocError(f"{name}: step 1 of M1 must have '- proves: R1'")
+    covered = {f for s in steps for f in s["covers"]}
+    want = next((m["covers"] for m in arch["milestones"] if m["id"] == milestone), None)
+    if want is None:
+        raise DocError(f"{name}: {milestone} is not a milestone in ARCHITECTURE.md")
+    for f in want:
+        if f not in covered:
+            raise DocError(f"{name}: feature {f} belongs to {milestone} in ARCHITECTURE.md but no step covers it")
+    return steps
+
+
+# --- CRITIQUE.md ---------------------------------------------------------------------------------
+
+def parse_critique(text, has_design):
+    name = "CRITIQUE.md"
+    check_summary(text, name)
+    targets = ("brief", "architecture", "plan") + (("design",) if has_design else ())
+    rounds, cur, last_c = [], None, 0
+    for l in _lines(text):
+        if re.match(r"^##(?!#)\s+ROUND\b", l, re.I):
+            m = re.match(rf"^##\s+ROUND\s+(\d+){SEP}(M\d+)\s*$", l, re.I)
+            if not m:
+                raise DocError(f"{name}: round heading is not '## ROUND <n> — M<k>': {l.strip()}")
+            n = int(m.group(1))
+            if n != len(rounds) + 1:
+                raise DocError(f"{name}: ROUND {n} is out of order: expected ROUND {len(rounds) + 1} (rounds run 1..N)")
+            cur = {"n": n, "milestone": m.group(2).upper(), "points": []}
+            rounds.append(cur)
+        elif re.match(r"^##(?!#)\s", l):
+            cur = None
+        elif cur is not None and re.match(r"^\s*[-*]\s*C\d+\b", l, re.I):
+            m = re.match(rf"^\s*[-*]\s*(C\d+)\s*\[(\w+)\]\s*\[(\w+)\]\s*(.*?)(?:{SEP}fix\s*:\s*(.*))?$", l, re.I)
+            if not m:
+                raise DocError(f"{name}: point is not '- C<n> [serious|minor] [target] <text> — fix: <fix>': {l.strip()}")
+            cid, sev, tgt = m.group(1).upper(), m.group(2).lower(), m.group(3).lower()
+            k = int(cid[1:])
+            if k <= last_c:
+                raise DocError(f"{name}: point {cid} is out of order or reused (ids increase across the file; last was C{last_c})")
+            if sev not in ("serious", "minor"):
+                raise DocError(f"{name}: point {cid} has severity '{sev}' (use serious or minor)")
+            if tgt not in targets:
+                extra = " (design needs a DESIGN.md)" if tgt == "design" else ""
+                raise DocError(f"{name}: point {cid} has target '{tgt}' (use {'|'.join(targets)}){extra}")
+            last_c = k
+            cur["points"].append({"id": cid, "severity": sev, "target": tgt,
+                                  "text": m.group(4).strip(), "fix": (m.group(5) or "").strip()})
+    if not rounds:
+        raise DocError(f"{name}: no '## ROUND 1 — M1' section")
+    return {"rounds": rounds}

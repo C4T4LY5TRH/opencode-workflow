@@ -1,15 +1,23 @@
-# BRIEF - {{SLUG}}
+# BRIEF — {{SLUG}}
 
-## GOAL (human words)
+## SUMMARY
+first draft not written yet
+
+## GOAL
 {{GOAL}}
 
-## WHY (one line)
-TODO
+## FOR WHO / WHY
 
-## DONE WHEN LIFE (what makes this worth keeping)
-TODO
+## WHERE IT RUNS
+- ui: no
 
-## CONSTRAINTS
-- free tools only
-- solo, no team
-- done beats perfect
+## FEATURES
+
+## OPPORTUNITIES
+
+## REALITY CHECK
+
+## DECISIONS
+
+## OPEN QUESTIONS
+- first draft not written yet

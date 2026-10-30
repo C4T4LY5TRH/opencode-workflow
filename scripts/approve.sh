@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Record the HUMAN's approval of a project's current PLAN.md.
+# Record the HUMAN's approval of a project's current documents: v4 = BRIEF + ARCHITECTURE
+# (+ DESIGN) + PLAN under one hash; an approved v3 project = its PLAN.md.
 #
 # usage:  bash scripts/approve.sh <slug>      (normally via the /approve command)
 #
 # Only the human-typed /approve command runs this: its !`...` line runs outside any
-# agent shell. harness_state.py parses PLAN.md (refusing a plan it cannot parse) and writes
-# mini-projects/<slug>/.harness/state.json: the plan's sha256 plus its steps.
-# The safety-gate plan gate allows code writes only while PLAN.md still has that hash,
-# so any edit to the plan revokes the approval. Agents cannot write .harness/ and
+# agent shell. harness_state.py checks the documents (naming every gap it refuses on) and
+# writes mini-projects/<slug>/.harness/state.json: the approval hash plus the plan's steps.
+# The safety-gate plan gate allows code writes only while the documents still have that
+# hash, so any edit to one of them revokes the approval. Agents cannot write .harness/ and
 # cannot run this script (safety-gate plugin + policies).
 set -euo pipefail
 
@@ -30,5 +31,6 @@ if [ ! -f "$PROJ/PLAN.md" ]; then
   exit 1
 fi
 
-# plan parsing, step recording and the state file are the library's job
+# the library decides v3 (PLAN.md only) or v4 (BRIEF + ARCHITECTURE + PLAN, one approval hash);
+# plan parsing, step recording and the state file are its job
 exec python3 "$HERE/harness_state.py" approve "$PROJ"

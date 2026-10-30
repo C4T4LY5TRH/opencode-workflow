@@ -278,13 +278,42 @@ symlinks and different-case spellings of PLAN/REVIEW/CRITIQUE/BUGHUNT; agents wr
 `brain/proposals/` and `RESEARCH/`. This closes the workshop-root gap P2-4 described. (2) The builder now trusts the sandbox
 (its shell is `*: allow` inside its project), which makes P2-6's sandbox the main control, so `git push` and publishing are
 denied by policy as a speed bump and the sandbox withholds push/publish credentials; a copied keychain helper or
-`/usr/bin/security` is a known residual (`HANDBOOK.md` §7). (3) The ship gate (P0-1, P1-3) also requires a fresh review:
+`/usr/bin/security` is a known residual (§8b below). (3) The ship gate (P0-1, P1-3) also requires a fresh review:
 a recorded SHIP verdict plus a matching code hash.
+
+**v4 piece 1 (2026-10-29, branch `harness-v4-plan`):** the security findings still hold. The enforcement detail moved here from
+the HANDBOOK (§8b). New controls are small: one approval hash over the documents, a circuit breaker and a lock in code,
+state writers limited to trusted code. Live v3-path results are in the v4 spec §14.1.
 
 **Still open:**
 1. Merge `harness-v3` (or `harness-v2`) into `main`, after you have run real projects through it and are happy with it.
-2. Known limits, by design (`HANDBOOK.md` §7): the sandbox covers shell only (grep/glob tools and the Playwright MCP server
+2. Known limits, by design (§8b below): the sandbox covers shell only (grep/glob tools and the Playwright MCP server
    are outside it), it is macOS-only, and network stays open.
+
+## 8b. Enforcement reference — five layers (moved from the HANDBOOK in v4)
+
+The HANDBOOK now carries a summary; this is the full detail. v4 added no new layer: the plan gate now covers the
+BRIEF/ARCHITECTURE/PLAN approval hash, write ownership covers the brainstormer, architect and critic files, and the
+plugin counts delegations (16 per human turn, one at a time) and clears lock files. Gaps in the plan gate that stay open
+are listed under "Other limits".
+| Layer | Where | What it guarantees |
+|---|---|---|
+| 1. Policies | `opencode.json` → `policies` | Hard deny for every agent, beats agent rules and saved approvals: destructive git/rm/disk commands, opaque `bash -c`/`eval`, `sudo`, curl uploads, agents driving `opencode api/auth/service`, writing `.harness/` or running `approve.sh`, unsafe Playwright tools, write/exec flags in "read-only" commands (`git --output`, `rg --pre`, `find -exec`/`-execdir`/`-delete`/`-fprint`/`-fls`), and `git push` and publishing (speed bump, see below; `npm`/`pnpm`/`yarn publish`, `twine upload`, `gh release`). |
+| 2. Permissions | `opencode.json` → `permission` + each agent's frontmatter | Deny-by-default editing; each agent writes only its own files; Code Mode (`execute`) denied; shell allow-lists per role. The builder's shell is `*: allow`, because layer 4 confines it. |
+| 3. Plugin | `.opencode/plugins/safety-gate.ts` | Plan gate: the edit/write/patch tools and simple shell redirects (`>`, `>>`, `cp`, `mv`, `install`, `mkdir`, `touch`, `tee`) write no code in a project without the documents you approved, unchanged: v4 = one hash over BRIEF, ARCHITECTURE, DESIGN (if any) and PLAN, and the plan's milestone not shipped yet (the plugin asks `harness_state.py approved`, fail closed); an approved v3 project = its PLAN.md. Ship gate: an agent's commit, tag, merge, cherry-pick, revert, rebase or am (its shell call, matched by text) checks the project of its workdir (outside a project = refused; `git -C` and `cd` are not parsed; the sandbox refuses every agent write under `.git`, so an agent commit cannot happen at all) and needs a recorded SHIP verdict, a live REVIEW.md that says SHIP, and a matching code hash. Step and review recording (HANDBOOK §6). Write confinement: write tools (every agent, every session, workshop root too) reach only `mini-projects/<slug>/`, `brain/proposals/` and the workshop `RESEARCH/`; symlinks and different-case spellings of the 8 doc files (BRIEF, BRAINSTORM, ARCHITECTURE, DESIGN, PLAN, REVIEW, CRITIQUE, BUGHUNT) are refused. |
+| 4. OS sandbox | `scripts/sandbox/` (wired by the plugin's shell hook) | Every agent shell runs under macOS `sandbox-exec`: writes only the project (no project workdir, or `_template` = read-only), temp dirs and tool caches (`~/.npm`, `~/.cache`, `~/Library/Caches`), never `.harness/` or anything under `.git` (so agents never `git add`/`commit`; you do), never the 8 doc files at a project root (`agent.sb`, anchored to `mini-projects/<slug>/<name>`, any letter case, symlinks and hard links too: a shell redirect, `cp`, `mv`, `ln` or `find -exec` cannot write a document; deeper files such as `dist/review.md` stay writable), no `.env`, `*.pem`, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.netrc`, opencode's data. Also withheld: `~/.npmrc`, `~/.pypirc`, `~/.yarnrc.yml`, `~/.git-credentials`, `~/.config/git/credentials`, the macOS keychain git helper (blocked by name), the launchd ssh-agent socket. Secret-looking env vars are removed. Applies to `python3` and `node` too. Your own `!cmd` in the TUI is not sandboxed. |
+| 5. Prompts | `AGENTS.md`, agent bodies | Voice, flow, report contract. Not a control on their own. |
+
+**Push and publish.** The six `policies` denies are a **speed bump**: easy to bypass by spelling (`git -C . push`).
+The real control is layer 4 withholding credentials. Residual risk: a sandboxed agent can copy the keychain helper
+into its project and run it, or call `/usr/bin/security`. So do not keep a git HTTPS token in the macOS keychain for
+repos you vibecode in; use ssh keys (the sandbox blocks `~/.ssh` and the agent socket). Custom ssh-agent sockets and
+credential paths set by `$XDG_CONFIG_HOME` or `GIT_CONFIG` are not covered.
+
+**Other limits.** The sandbox covers shell only: the grep/glob tools and the Playwright MCP server are not shell, so
+a grep search could still show `.env` contents. Network stays open. macOS only; elsewhere agent shells are refused
+(fail closed: "HARNESS SANDBOX: cannot sandbox this agent shell"). Scripts that write harness state run from the command template when you type the command, outside the
+sandbox; agents cannot run them. The plan gate does not see writes made by a program the builder runs (`sed -i`, `python3 -c`, `node x.js`, `git apply`, `npm install`); the sandbox limits where they write, not whether a plan exists. The step's file list is a prompt-level rule; code does not enforce it. Residual: a "read-only" agent (orchestrator, brainstormer, architect, planner, critic) can still write a code file with a shell redirect once a plan is approved: the plan gate cannot tell which agent writes, and the sandbox keeps it only out of the docs, `.git` and `.harness/`. Gotchas: `brain/rules/060-ops.md`.
 
 ---
 

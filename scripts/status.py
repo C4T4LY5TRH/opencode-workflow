@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """/status text and the read-only dashboard (stdlib only).
 
-usage: python3 scripts/status.py [slug | brain | --html]
+usage: python3 scripts/status.py [slug | brain | --html | <slug> --check <FILE>]
 
   (none)   one line per project, the bench result, the brain line
   <slug>   one project in detail: every step, the failure text, the review
   brain    proposals waiting in brain/proposals/ and rules flagged DECAY
   --html   write .harness/dashboard.html (self-refreshing, read-only), print nothing
+  <slug> --check <FILE>   run one document's format check, print OK or ERROR: <message> (read-only; the one form
+           an agent shell may run besides `<slug>`)
 
 Run from command templates and from the safety-gate plugin. It only reads the project state, except that
 --html writes the one dashboard file. Nothing here can raise into a caller: a bad project becomes a message.
@@ -25,6 +27,7 @@ sys.path.insert(0, HERE)
 sys.dont_write_bytecode = True
 
 import harness_state as hs  # noqa: E402
+import next as nx  # noqa: E402  (the one routing map: next_command; the approval digest)
 
 SLUG_RE = re.compile(r"[a-z0-9-][a-z0-9_-]*")  # same rule as approve.sh and next.py
 TEXT_FAILURE_LINES = 10
@@ -57,18 +60,15 @@ def _goal(proj):
     return m.group(1).strip() if m else ""
 
 
-def _next(slug, name):
-    return {"APPROVE": f"/approve {slug}", "SHIP": f"/ship {slug}", "STUCK": f"/status {slug}"}.get(name, f"/go {slug}")
-
-
 def info(workshop, slug):
     """Everything shown about one project. Never raises: a project that cannot be read gets an `error`."""
     proj = os.path.join(workshop, "mini-projects", slug)
     d = {"slug": slug, "error": None, "steps": [], "review": None, "approved_at": None, "goal": _goal(proj),
          "findings": [], "updated": None}
     try:
-        ph = hs.phase(proj)
-        d.update(phase=ph["phase"], step=ph["step"], done=ph["done"], total=ph["total"], reason=ph["reason"])
+        ph = hs.stage(proj)
+        d.update(stage=ph["stage"], step=ph["step"], done=ph["done"], total=ph["total"], reason=ph["reason"],
+                 milestone=ph["milestone"], at=ph["at"], problem=ph["error"])
         try:
             state = hs.load(proj)
         except hs.StateError:
@@ -77,19 +77,21 @@ def info(workshop, slug):
         d["steps"] = [s for s in state.get("steps", []) if isinstance(s, dict)]
         d["approved_at"] = state.get("approved_at")
         rev = state.get("review")
-        if isinstance(rev, dict) and rev.get("verdict") and ph["phase"] in ("REVIEW", "FIX", "SHIP", "STUCK") and not ph["step"]:
-            d["review"] = rev["verdict"] + (" (stale: code changed since)" if ph["phase"] == "REVIEW" else "")
-            if ph["phase"] != "REVIEW":
+        if isinstance(rev, dict) and rev.get("verdict") and ph["stage"] in ("REVIEW", "FIX", "SHIP", "STUCK") and not ph["step"]:
+            d["review"] = rev["verdict"] + (" (stale: code changed since)" if ph["stage"] == "REVIEW" else "")
+            if ph["stage"] != "REVIEW":
                 lines = [l.rstrip() for l in _read(os.path.join(proj, "REVIEW.md")).splitlines() if l.strip()]
                 d["findings"] = lines[:REVIEW_LINES]
         mtimes = [os.path.getmtime(p) for p in (os.path.join(proj, ".harness", "state.json"),
                   os.path.join(proj, "PLAN.md"), os.path.join(proj, "REVIEW.md")) if os.path.exists(p)]
         d["updated"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(max(mtimes))) if mtimes else None
     except Exception as exc:  # one broken project must not hide the others
-        d.update(phase="?", step=None, done=0, total=0, reason="", error=f"could not read this project ({exc.__class__.__name__})")
-    d["next"] = _next(slug, d["phase"])
-    if d["error"] and d["phase"] == "APPROVE":
+        d.update(stage="?", step=None, done=0, total=0, reason="", milestone=None, at=None, problem=None,
+                 error=f"could not read this project ({exc.__class__.__name__})")
+    d["next"] = nx.next_command(slug, d["stage"], d["at"])
+    if d["error"] and d["stage"] == "APPROVE":
         d["next"] = f"/approve {slug}"
+    d["digest"] = nx.digest(workshop, slug) if d["stage"] == "DECIDE" else None
     return d
 
 
@@ -135,16 +137,20 @@ def _brain_line(props, decay):
 # --- text --------------------------------------------------------------------------------
 
 def _progress(d):
-    if d["phase"] in ("BUILD", "STUCK") and d["step"]:
+    if d["stage"] in ("BUILD", "STUCK") and d["step"]:
         return f"step {d['step'].get('n')}/{d['total']}"
     return f"{d['done']}/{d['total']} steps done" if d["total"] else "no steps yet"
 
 
 def _detail(d):
-    out = [f"{d['slug']}  {d['phase']}  {_progress(d)}"]
+    out = [f"{d['slug']}  {d['stage']}  {_progress(d)}"]
     if d["goal"]:
         out.append(f"goal: {d['goal']}")
+    if d["milestone"]:
+        out.append(f"milestone: {d['milestone']}")
     out.append(d["error"] or d["reason"])
+    if d["problem"] and d["stage"] != "DECIDE":
+        out.append(f"problem: {d['problem']}")
     if d["approved_at"]:
         out.append(f"approved: {d['approved_at']}")
     cur = next((s for s in d["steps"] if not s.get("done_at")), None)
@@ -159,6 +165,8 @@ def _detail(d):
     if d["review"]:
         out.append(f"review: {d['review']}")
         out.extend("  " + l for l in d["findings"])
+    if d["digest"]:
+        out.extend(["", d["digest"], ""])
     out.append(f"next: {d['next']}")
     return "\n".join(out)
 
@@ -180,8 +188,8 @@ def text(workshop, slug=None):
         out.append("no projects yet: /new \"<goal>\"")
     for s in slugs:
         d = info(workshop, s)
-        out.append(f"{s:<16} {d['phase']:<8} {_progress(d):<16} next: {d['next']}")
-        if d["error"] or d["phase"] in ("APPROVE", "STUCK"):
+        out.append(f"{s:<16} {d['stage']:<11} {_progress(d):<16} next: {d['next']}")
+        if d["error"] or d["stage"] in ("APPROVE", "STUCK"):
             out.append(f"{'':<16} {d['error'] or d['reason']}")
     return "\n".join(out) + "\n"
 
@@ -197,7 +205,7 @@ main{max-width:960px;margin:0 auto}h1{font-size:20px;margin:0 0 4px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 12px}
 .card h2{font-size:17px;margin:0;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .badge{font-size:12px;border:1px solid var(--line);border-radius:4px;padding:1px 7px}
-.STUCK{color:var(--bad);border-color:var(--bad)}.SHIP{color:var(--ok);border-color:var(--ok)}
+.STUCK{color:var(--bad);border-color:var(--bad)}.SHIP,.DONE{color:var(--ok);border-color:var(--ok)}
 .goal,.dim{color:var(--dim);margin:2px 0}.err{color:var(--bad);margin:6px 0}
 progress{width:100%;height:10px;margin:8px 0;accent-color:var(--fill)}
 ul{list-style:none;padding:0;margin:6px 0}li{margin:2px 0}li.cur{font-weight:600}
@@ -207,7 +215,7 @@ code{font-family:ui-monospace,monospace;font-size:13px}
 
 
 def _card(d):
-    h = [f'<section class="card"><h2>{esc(d["slug"])} <span class="badge {esc(d["phase"])}">{esc(d["phase"])}</span>'
+    h = [f'<section class="card"><h2>{esc(d["slug"])} <span class="badge {esc(d["stage"])}">{esc(d["stage"])}</span>'
          f' <span class="dim">{esc(_progress(d))}</span></h2>']
     if d["goal"]:
         h.append(f'<p class="goal">{esc(d["goal"])}</p>')
@@ -259,9 +267,26 @@ def write_html(workshop):
 
 # --- CLI ---------------------------------------------------------------------------------
 
+CHECK_USAGE = "ERROR: usage: status.py <slug> --check <" + "|".join(hs.DOC_NAMES) + ">"
+
+
+def check(workshop, slug, name):
+    """`<slug> --check <FILE>`: OK or ERROR: <message>. Validates both arguments before reading anything; read-only."""
+    if not SLUG_RE.fullmatch(slug or "") or slug not in project_slugs(workshop) or name not in hs.DOC_NAMES:
+        return CHECK_USAGE + "\n"
+    try:
+        err = hs.check_file(os.path.join(workshop, "mini-projects", slug), name)
+    except Exception as exc:  # the answer must stay one line
+        err = f"could not check {name} ({exc.__class__.__name__})"
+    return ("OK" if err is None else "ERROR: " + " ".join(err.split())) + "\n"
+
+
 def main(argv):
     workshop = os.path.dirname(HERE)
     args = argv[1:]
+    if len(args) == 3 and args[1] == "--check":
+        sys.stdout.write(check(workshop, args[0].strip(), args[2].strip()))
+        return 0
     if len(args) > 1:
         sys.stdout.write("usage: /status [project | brain]\n")
         return 0

@@ -8,3 +8,4 @@ mini-projects/*
 .gate-test-*/
 CLAUDE.md
 /RESEARCH/
+__pycache__/

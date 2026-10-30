@@ -4,7 +4,7 @@ The harness lives in this repo (`.opencode/`, `brain/`, `scripts/`, `AGENTS.md`)
 `~/.config/opencode`, so moving it means moving the repo and then re-applying three small settings that live
 **outside** the repo (two of them are optional; the Anthropic key is not). `scripts/bootstrap.sh` checks all of it and prints the fix for anything missing.
 
-Round trip verified 2026-10-25 (v3, 9 agents + 9 commands, branch `harness-v3`): `git bundle` → `git clone` into a
+Round trip last verified 2026-10-25 on v3 (9 agents + 9 commands, branch `harness-v3`); v4 piece 1 (11 agents + 10 commands, branch `harness-v4`, fast-forwarded to the build branch `harness-v4-plan` when piece 1 is done) has not been moved yet; its commands below name `harness-v4`: `git bundle` → `git clone` into a
 folder under the home dir → `bash scripts/bootstrap.sh` all OK, `bash scripts/bench.sh` failed 0,
 `node scripts/gate-test.mjs` and `python3 scripts/state-test.py` all passed (incl. the OS sandbox cases) from the clone,
 with no runtime state, approvals or test debris carried over.
@@ -15,7 +15,7 @@ with no runtime state, approvals or test debris carried over.
 | `.opencode/` agents, commands, skills, plugins, config + policies | service env `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1` |
 | `brain/`, `scripts/`, `mini-projects/_template/`, docs | policy hiding `~/.agents` skills, in `~/.config/opencode/opencode.json` |
 | full git history | opencode's saved approvals (kept empty on purpose, so start clean) |
-| | **your Anthropic API key** (opencode's auth store; v3 needs it for the orchestrator, planner, builder, reviewer, hunter and brain) |
+| | **your Anthropic API key** (opencode's auth store; v4 needs it for the Opus architect, the Sonnet brainstormer, planner, critic, builder, hunter, reviewer and brain, and the Haiku orchestrator and researcher) |
 | | `.harness/` runtime state, incl. rule-usage telemetry (`rule-usage.json`); copy it if you want `/status brain`'s decay history |
 | | your mini projects (each is its own repo) and their `/approve` records and step state (`.harness/` is gitignored: re-`/approve` after moving) |
 | | `.archive/` backups, your local `CLAUDE.md` (Claude Code notes, gitignored) |
@@ -26,20 +26,20 @@ with no runtime state, approvals or test debris carried over.
 cd ~/Projects/opencode
 git status --short                             # must be empty: a bundle carries committed files only
 bash scripts/bench.sh                          # must say passed N/N, failed 0
-git bundle create ~/harness-v3.bundle harness-v3   # one file: the v3 branch with its full history
-# want v2.2 and main too? use --all instead of harness-v3
+git bundle create ~/harness-v4.bundle harness-v4   # one file: the v4 branch with its full history
+# want v2.2 and main too? use --all instead of harness-v4
 ```
-Move `~/harness-v3.bundle` to the other machine (AirDrop, USB, anything). Mini projects are separate repos:
+Move `~/harness-v4.bundle` to the other machine (AirDrop, USB, anything). Mini projects are separate repos:
 copy any you want (`mini-projects/<slug>/`) or push them to a remote you own.
 
 ## On the new machine
 1. On a **Mac** (agent shells run in macOS `sandbox-exec`; elsewhere every agent shell command is refused), install
-   opencode (verified on **2.1.3**; other versions: see the last rule below), Node 22+, python3.
+   opencode (built for **2.2.0**; the platform facts were read in 2.1.3 and diffed unchanged; other versions: see the last rule below), Node 22+, python3.
    Once: `npx playwright install chromium`.
 2. Restore:
    ```bash
-   git clone -b harness-v3 ~/harness-v3.bundle ~/Projects/opencode   # not inside /tmp: the sandbox lets agents write temp dirs
-   cd ~/Projects/opencode             # stays on harness-v3 until it is merged into main
+   git clone -b harness-v4 ~/harness-v4.bundle ~/Projects/opencode   # not inside /tmp: the sandbox lets agents write temp dirs
+   cd ~/Projects/opencode
    ```
 3. Store your Anthropic API key. **You type this yourself**; agents are policy-denied from `opencode auth`:
    ```bash
@@ -58,7 +58,7 @@ copy any you want (`mini-projects/<slug>/`) or push them to a remote you own.
 4. Check everything: `bash scripts/bootstrap.sh`. It verifies the tools and `sandbox-exec`, refuses a workshop inside a
    temp dir or a harness copy in `~/.config/opencode`, warns about the Anthropic key and the two settings above, then runs the bench
    (its `opencode models` call loads the plugins, so `plugins-alive` is green on the first run).
-5. Start it: `cd ~/Projects/opencode && opencode`. For each project you copied over, read its PLAN.md and `/approve <slug>`
+5. Start it: `cd ~/Projects/opencode && opencode`. For each project you copied over, read its approval digest (`/status <slug>`) and `/approve <slug>`
    again before `/go`.
 
 ## Rules
@@ -68,9 +68,9 @@ copy any you want (`mini-projects/<slug>/`) or push them to a remote you own.
   Saved approvals override every `ask` for every agent, and they are what silently disabled the gates before the audit.
 - Models live in ONE place: `.opencode/opencode.json`, `agent.<name>.model`. Agent files carry no `model:` line
   (it would silently override opencode.json; the bench check `models-one-place` fails if one comes back). Claude model
-  IDs come from `opencode models | grep anthropic`. The checking roles (critic, skeptic, researcher) use free models,
-  which differ in availability between days and regions: if the bench's `models-resolve` fails on the new machine,
+  IDs come from `opencode models | grep anthropic` (v4 uses `anthropic/claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-5-5`). One checking role (skeptic) uses a free model,
+  which differs in availability between days and regions: if the bench's `models-resolve` fails on the new machine,
   change that agent's entry in `opencode.json` (`brain/NOTES-pending-claude-key.md` lists alternatives).
 - If the other machine runs a different opencode version, read `AUDIT.md` section 2 and the platform notes in
   `docs/audit/research/`, re-run `bash scripts/bench.sh`, and run one real project before trusting the gates.
-  The platform facts were read from the 2.1.3 source: `git clone --depth 1 --branch v2.1.3 https://github.com/anomalyco/opencode`.
+  The platform facts were read from the 2.1.3 source (`git clone --depth 1 --branch v2.1.3 https://github.com/anomalyco/opencode`); the 2.2.0 diff of every cited line is in the v4 spec, section 14.

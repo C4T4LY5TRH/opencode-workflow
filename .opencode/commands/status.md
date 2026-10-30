@@ -6,4 +6,4 @@ Status request: "$ARGUMENTS" (empty means every project; a project name means th
 
 !`python3 scripts/status.py "$ARGUMENTS" && python3 scripts/status.py --html >/dev/null 2>&1; true`
 
-Relay that output to the human verbatim. Run nothing else and write nothing.
+Relay that output to the human verbatim. Run nothing else and write nothing. At DECIDE the output includes the approval digest: relay it verbatim (code-written; never summarise it).
