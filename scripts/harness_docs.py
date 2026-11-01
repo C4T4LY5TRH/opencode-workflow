@@ -4,6 +4,7 @@
 Stdlib only, no imports from other harness modules. Every DocError message starts with the file name and
 names the exact line or id, because it is fed back verbatim to the agent that wrote the file.
 """
+import posixpath
 import re
 
 
@@ -74,7 +75,36 @@ def _ids(raw, prefix, who):
     return out
 
 
+# --- paths ---------------------------------------------------------------------------------------
+
+def norm_path(p):
+    """'./Src//A.js' -> 'src/a.js'. Lowercase (this Mac is case-insensitive); a trailing '/' (a folder) is kept."""
+    p = p.strip().replace("\\", "/").lower()
+    folder = p.endswith("/") or p.endswith("/.")
+    n = posixpath.normpath(p) if p else ""
+    if n == ".":
+        return ""
+    return n + "/" if folder and not n.endswith("/") else n
+
+
+def paths_overlap(a, b):
+    """Equal after norm_path, or one is a folder ('/') that is a prefix of the other. 'src' (no slash) is a file."""
+    a, b = norm_path(a), norm_path(b)
+    return a == b or (a.endswith("/") and b.startswith(a)) or (b.endswith("/") and a.startswith(b))
+
+
+# Paths no builder step may own: QA's tests, request/research files, designer output, harness state, the doc files.
+HARNESS_OWNED = ("tests/acceptance/", "requests/", "RESEARCH/", "design/", ".harness/",
+                 "BRIEF.md", "BRAINSTORM.md", "ARCHITECTURE.md", "DESIGN.md", "PLAN.md", "REVIEW.md",
+                 "CRITIQUE.md", "BUGHUNT.md", "QA.md", "VISUAL.md")
+
+
 # --- BRIEF.md ------------------------------------------------------------------------------------
+
+# the '## ' sections of BRIEF.md in order: next.py's BRIEF_FORMAT is built from this; a test checks brainstormer.md
+BRIEF_SECTIONS = ("SUMMARY", "GOAL", "FOR WHO / WHY", "WHERE IT RUNS", "FEATURES", "OPPORTUNITIES", "REALITY CHECK",
+                  "DECISIONS", "OPEN QUESTIONS")
+
 
 def parse_brief(text):
     name = "BRIEF.md"
@@ -133,7 +163,7 @@ def parse_answers(text, name="file"):
 
 # --- ARCHITECTURE.md -----------------------------------------------------------------------------
 
-def parse_architecture(text, feature_ids, must_ids):
+def parse_architecture(text, feature_ids, must_ids, ui=False):
     name = "ARCHITECTURE.md"
     check_summary(text, name)
     secs = sections(text)
@@ -187,7 +217,14 @@ def parse_architecture(text, feature_ids, must_ids):
     for f in sorted(must_ids):
         if f not in owner:
             raise DocError(f"{name}: MUST feature {f} is in no milestone")
-    return {"risks": risks, "milestones": milestones,
+    preview = None
+    for l in secs.get("STACK", []):
+        m = re.match(r"^\s*[-*]\s*preview\s*:\s*(\S.*)$", l, re.I)
+        if m:
+            preview = m.group(1).strip().strip("`").strip() or None
+    if ui and preview is None:
+        raise DocError(f"{name}: ui: yes needs a '- preview: <command>' line in STACK")
+    return {"risks": risks, "milestones": milestones, "preview": preview,
             "answers": parse_answers(text, name), "feature_ids": set(feature_ids)}
 
 
@@ -222,9 +259,9 @@ def parse_plan(text):
         if n != idx:
             raise PlanError(f"step {n} ('{title}') is out of order: expected step {idx} (steps run 1..N with no gaps)")
         who = f"step {n} ('{title}')"
-        files, checks, covers, proves = [], [], [], None
+        files, checks, covers, proves, after = [], [], [], None, None
         for l in rest:
-            m = re.match(r"^\s*[-*]\s*(files|done when|covers|proves)\s*:\s*(.*)$", l, re.I)
+            m = re.match(r"^\s*[-*]\s*(files|done when|covers|proves|after)\s*:\s*(.*)$", l, re.I)
             if not m:
                 continue
             key = m.group(1).lower()
@@ -236,6 +273,14 @@ def parse_plan(text):
                     covers = _ids(m.group(2), "F", f"PLAN.md {who}")
                 except DocError as exc:
                     raise PlanError(str(exc))
+            elif key == "after":
+                raw_after = m.group(2).strip().strip("`").strip()
+                after = []
+                if raw_after and raw_after.lower().rstrip(".") != "none":
+                    for tok in [t for t in re.split(r"[,\s]+", raw_after) if t]:
+                        if not re.fullmatch(r"\d+", tok):
+                            raise PlanError(f"PLAN.md {who}: 'after' needs step numbers or 'none', got '{tok}'")
+                        after.append(int(tok))
             elif key == "proves":
                 try:
                     ids = _ids(m.group(2), "R", f"PLAN.md {who}")
@@ -253,7 +298,7 @@ def parse_plan(text):
         if not m or not m.group(1).strip():
             raise PlanError(f"{who}: 'done when' needs exactly one command inside one pair of backticks, got: {raw or '(empty)'}")
         steps.append({"n": n, "title": title, "files": files, "check": m.group(1).strip(),
-                      "covers": covers, "proves": proves})
+                      "covers": covers, "proves": proves, "after": after})
     return steps
 
 
@@ -286,6 +331,24 @@ def check_plan(text, arch, milestone):
                 raise DocError(f"{name}: step {s['n']} covers {f}, which is not a feature in BRIEF.md")
         if s["proves"] is not None and s["proves"] not in risk_ids:
             raise DocError(f"{name}: step {s['n']} proves {s['proves']}, which is not a risk in ARCHITECTURE.md")
+    owned = [norm_path(o) for o in HARNESS_OWNED]
+    seen_checks = {}
+    for s in steps:
+        for a in s["after"] or []:
+            if a >= s["n"]:
+                raise DocError(f"{name}: step {s['n']} lists after: {a}, which is not an earlier step")
+        for f in s["files"]:
+            if ".." in f.replace("\\", "/").split("/") or f[0] in "/~" or "\\" in f:
+                raise DocError(f"{name}: step {s['n']} lists {f}: use a plain path inside the project "
+                               "(no .., no absolute path)")
+            if norm_path(f) in ("", ".", "/"):
+                raise DocError(f"{name}: step {s['n']} lists {f}: name files or folders, not the whole project")
+            if any(paths_overlap(f, o) for o in owned):
+                raise DocError(f"{name}: step {s['n']} may not list {f} (owned by the harness or another agent)")
+        key = " ".join(s["check"].split())
+        if key in seen_checks:
+            raise DocError(f"{name}: step {seen_checks[key]} and step {s['n']} share the check {s['check']}")
+        seen_checks[key] = s["n"]
     if milestone == "M1" and steps[0]["proves"] != "R1":
         raise DocError(f"{name}: step 1 of M1 must have '- proves: R1'")
     covered = {f for s in steps for f in s["covers"]}
@@ -336,3 +399,132 @@ def parse_critique(text, has_design):
     if not rounds:
         raise DocError(f"{name}: no '## ROUND 1 — M1' section")
     return {"rounds": rounds}
+
+
+# --- DESIGN.md + mockups -------------------------------------------------------------------------
+
+DESIGN_SECTIONS = ("SUMMARY", "DIRECTION", "TOKENS", "COMPONENTS", "SCREENS", "ACCESSIBILITY", "STACK FIT")
+
+
+def parse_design(text):
+    """DESIGN.md -> {"screens": [(name, path)], "stack_fit": "agree"|"object", "object_reason": str|None}."""
+    name = "DESIGN.md"
+    try:
+        check_summary(text, name)
+    except DocError as exc:
+        raise PlanError(str(exc))
+    secs = sections(text)
+    for h in DESIGN_SECTIONS:
+        if h not in secs:
+            raise PlanError(f"{name}: no '## {h}' section")
+    screens = []
+    for l in _bullets(secs["SCREENS"]):
+        m = re.match(r"^\s*[-*]\s*(.+?)\s*:\s*`?(\S+?)`?\s*$", l)
+        path = norm_path(m.group(2)) if m else ""
+        if not m or not path.startswith("design/mockups/") or ".." in path or not path.endswith(".html"):
+            raise PlanError(f"{name}: SCREENS line is not '- <screen>: design/mockups/<name>.html': {l.strip()}")
+        screens.append((m.group(1).strip(), m.group(2)))
+    if not 1 <= len(screens) <= 6:
+        raise PlanError(f"{name}: '## SCREENS' needs 1 to 6 entries, found {len(screens)}")
+    fit = _bullets(secs["STACK FIT"])
+    if len(fit) != 1:
+        raise PlanError(f"{name}: '## STACK FIT' needs exactly one line: '- agree' or '- object: <why>'")
+    m = re.match(r"^\s*[-*]\s*(agree\.?|object\s*:\s*(\S.*))\s*$", fit[0], re.I)
+    if not m:
+        raise PlanError(f"{name}: STACK FIT line is not '- agree' or '- object: <why>': {fit[0].strip()}")
+    if m.group(2):
+        return {"screens": screens, "stack_fit": "object", "object_reason": m.group(2).strip()}
+    return {"screens": screens, "stack_fit": "agree", "object_reason": None}
+
+
+_FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
+
+
+def check_mockup(text):
+    """Error text if a mockup is not static HTML/CSS (script, outside URL), else None."""
+    if re.search(r"<script", text, re.I):
+        return "mockup has a <script tag (mockups are static HTML/CSS only)"
+    for m in re.finditer(r"https?://([^/\s\"'<>)?#]*)", text, re.I):
+        host = m.group(1).lower().rsplit("@", 1)[-1].split(":")[0]
+        if host not in _FONT_HOSTS:
+            return f"mockup loads {m.group(0)} (only fonts.googleapis.com and fonts.gstatic.com are allowed)"
+    if re.search(r"(?:[\w-]+\s*=\s*[\"']?\s*|@import\s*[\"']?\s*|url\(\s*[\"']?\s*)//", text, re.I):
+        return "mockup has a protocol-relative '//' URL (only Google Fonts links are allowed)"
+    if re.search(r"javascript:", text, re.I):
+        return "mockup has a javascript: URL (static HTML/CSS only)"
+    if re.search(r"\son\w+\s*=", text, re.I):
+        return "mockup has an inline event handler (static HTML/CSS only)"
+    return None
+
+
+# --- QA.md, VISUAL.md, requests ------------------------------------------------------------------
+
+def parse_qa(text):
+    """QA.md -> {"tests": {"F3": path}, "run": cmd or "", "verdict": "PASS"|"FAIL"|None, "revisions": [...]}."""
+    secs = sections(text)
+    tests = {}
+    for l in secs.get("TESTS", []):
+        m = re.match(r"^\s*[-*]\s*(F\d+)\s*:\s*`?(\S+?)`?(?:\s.*)?$", l, re.I)
+        if m:
+            tests[m.group(1).upper()] = m.group(2)
+    run = ""
+    for l in secs.get("RUN", []):
+        m = re.match(r"^\s*[-*]\s*run\s*:\s*`([^`]+)`\s*$", l, re.I)
+        if m and m.group(1).strip():
+            run = m.group(1).strip()
+            break
+    verdict = None
+    for l in secs.get("VERDICT", []):
+        m = re.match(r"^\s*VERDICT\s*:\s*(PASS|FAIL)\s*$", l, re.I)
+        if m:
+            verdict = m.group(1).upper()
+            break
+    revisions = []
+    for l in secs.get("REVISIONS", []):
+        m = re.match(rf"^\s*[-*]\s*step\s*(\d+)\s*:\s*`?(\S+?)`?(?:{SEP}.*)?$", l, re.I)
+        if m:
+            revisions.append({"step": int(m.group(1)), "test": m.group(2)})
+    return {"tests": tests, "run": run, "verdict": verdict, "revisions": revisions}
+
+
+def check_qa(text, must_ids):
+    """Error text (starts 'QA.md') or None."""
+    name = "QA.md"
+    try:
+        check_summary(text, name)
+    except DocError as exc:
+        return str(exc)
+    qa = parse_qa(text)
+    for fid in sorted(must_ids):
+        if fid not in qa["tests"]:
+            return f"{name}: '## TESTS' has no line for MUST feature {fid} ('- {fid}: tests/acceptance/<file> — <what it proves>')"
+    for fid, path in qa["tests"].items():
+        n = norm_path(path)
+        if not n.startswith("tests/acceptance/") or ".." in n or n.endswith("/"):
+            return f"{name}: test for {fid} must be a file under tests/acceptance/, got {path}"
+    runs = [l for l in sections(text).get("RUN", []) if re.match(r"^\s*[-*]\s*run\s*:", l, re.I)]
+    if len(runs) != 1 or not qa["run"]:
+        return f"{name}: '## RUN' needs exactly one '- run: `<command>`' line (one command in one pair of backticks)"
+    return None
+
+
+def parse_visual(text):
+    """VISUAL.md -> 'MATCH' | 'FIX' | None (from the first 'VERDICT: MATCH|FIX' line)."""
+    for l in _lines(text):
+        m = re.match(r"^\s*VERDICT\s*:\s*(MATCH|FIX)\s*$", l, re.I)
+        if m:
+            return m.group(1).upper()
+    return None
+
+
+def parse_request(text):
+    """requests/step<n>.md first line -> {"kind": "RESEARCH", "question"} | {"kind": "TEST-WRONG", "test", "why"}."""
+    first = next((l.strip() for l in _lines(text) if l.strip()), "")
+    m = re.match(r"^RESEARCH\s*:\s*(\S.*)$", first)
+    if m:
+        return {"kind": "RESEARCH", "question": m.group(1).strip()}
+    m = re.match(rf"^TEST-WRONG\s*:\s*`?(\S+?)`?{SEP}(\S.*)$", first)
+    if m:
+        return {"kind": "TEST-WRONG", "test": m.group(1), "why": m.group(2).strip()}
+    raise PlanError("request: the first line must be 'RESEARCH: <question>' or "
+                    f"'TEST-WRONG: <test file> — <why it cannot pass>', got: {first or '(empty)'}")

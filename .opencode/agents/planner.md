@@ -20,6 +20,17 @@ permission:
     "rg *": allow
     "grep *": allow
     "find *": allow
+    # fact probes (spec 6.5): exact lines, so a chain behind one still resolves to deny (bench: probes-exact)
+    "git --version": allow
+    "node --version": allow
+    "npm --version": allow
+    "npx --version": allow
+    "python3 --version": allow
+    "which *": allow
+    "pwd": allow
+    # checks its own file before it returns, text mode only (bench: orchestrator-status-only)
+    "python3 scripts/status.py *": allow
+    "python3 scripts/status.py *--html*": deny
   webfetch: deny
   websearch: deny
   task: deny
@@ -43,6 +54,7 @@ IN: <1-5 things this milestone must do, each testable> / OUT: <what it will NOT 
 ## STEPS
 ### 1. <title>
 - files: <path>, <path>
+- after: <n>, <n> | none        (optional; no line = after the previous step)
 - covers: F1, F4
 - proves: R1
 - done when: `<one shell command that exits 0 when the step works>`
@@ -79,6 +91,14 @@ PLAN RULES:
 - You make no architecture decision (stack, structure, a new dependency, a new milestone). If the plan needs one,
   write the plan up to that point and report BLOCKED: <the decision> | the architect decides it.
 - A decision only the human can make (key, account, price): say it under risk and report it under BLOCKED.
+- A step's `files:` are FILES or folders inside the project. A path with a trailing `/` is a folder, without it a file.
+  Never `..`, an absolute path, `~`, a backslash or the whole project (`.`), and never `tests/acceptance/`,
+  `requests/`, `RESEARCH/`, `design/`, `.harness/` or a doc file (QA owns the tests, the builder never edits them).
+- No `after:` line = the step runs after the previous step. Write `- after: none` (or the exact earlier step numbers,
+  `- after: 1, 3`) for a step that can run beside others; steps with disjoint `files:` then run in parallel, up to 3.
+- A step's check stays true for the rest of the milestone (a later step must not break it). A parallel step's check
+  tests only its own part. The step that changes documentation lists README.md in its files. Only the step that owns
+  `package.json` installs dependencies; others never run an install.
 - No code.
 
 ANSWER (told to answer the critic): read the latest `## ROUND` in CRITIQUE.md. For every [serious] point aimed at
@@ -87,7 +107,7 @@ ANSWER (told to answer the critic): read the latest `## ROUND` in CRITIQUE.md. F
 
 Your job is not done until PLAN.md exists on disk: write it with the write tool, then stop and report.
 Do the work FIRST, report AFTER. DID lists only files you actually wrote with a tool in this turn; if you wrote none, DID says "no file". Never describe a write you have not done.
-REPORT BACK:
+REPORT BACK (10 lines at most):
 DID: <file you wrote, or "no file">
 BASIS: <files you read, URLs, or screenshots that support this. Never an invented command.>
 BLOCKED: <what stopped you> | <the ONE thing that unblocks it>

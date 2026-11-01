@@ -1,7 +1,7 @@
 # 020-gates
 
 The v4 loop: /new (idea, brainstorm) -> /go (lock the brief, then the automatic chain) -> /approve or /critique ->
-/go per step -> /ship. `scripts/next.py` computes the stage from the files and the state. Gate order, no skipping:
+/go (autopilot: tests, build, verify, review) -> /ship. `scripts/next.py` computes the stage from the files and the state. Gate order, no skipping:
 1. PURPOSE - the idea is the GOAL of BRIEF.md (/new). No idea, no project.
 2. BRIEF LOCK - /go locks BRIEF.md: right format, no open questions, at least one [MUST] feature. Only the
    brainstormer writes it. `/brainstorm <slug> brief` reopens a locked brief; /go locks it again.
@@ -12,7 +12,7 @@ The v4 loop: /new (idea, brainstorm) -> /go (lock the brief, then the automatic 
    revokes it. /approve names every gap it refuses on. /critique asks for one more round instead.
 5. CODE - plan gate: no code write (edit/write/patch tools, shell redirects) unless the documents are approved and
    unchanged and the plan's milestone is not shipped (programs the builder runs are limited by the sandbox, not
-   this gate). One step per /go.
+   this gate). Each builder writes only its own step's files.
 6. STEP DONE - only when the plugin sees the step's exact check pass. The builder's word is not proof.
    2 failed checks -> STUCK, the human decides. A failed spike (a step with `proves`) -> REARCHITECT instead.
 7. REVIEW - REVIEW.md with `VERDICT: SHIP` (blind spots are a section of it). Max 2 review->fix rounds.
@@ -23,12 +23,12 @@ The v4 loop: /new (idea, brainstorm) -> /go (lock the brief, then the automatic 
 
 Limits, all in code:
 - 2 failed attempts per automatic stage -> STUCK. `/go <slug> retry` (or /approve) clears the count.
-- 16 delegations per human turn (circuit breaker); one at a time, never in the background.
+- 16 delegations per human turn (circuit breaker); at most 3 open at once, never in the background.
+- Autopilot stops at a cost cap ($10 per milestone, `/go cap <usd>`) and at a turn cap (3 x steps + 10); `/stop` ends it.
 - One chain per project: `.harness/lock`, freed when the orchestrator's turn ends, expires after 30 minutes.
   /approve and /ship refuse while it is fresh (they would judge files the chain is still writing).
 - Only human-typed commands move a stage on (/go, /approve, /critique, /ship). No agent locks, approves or ships.
-- An approved v3 project (plan hash, no ARCHITECTURE.md) keeps the v3 loop.
-- Write tools reach only mini-projects/<slug>/, brain/proposals/ and the workshop RESEARCH/. No symlinks.
+- Write tools reach only mini-projects/<slug>/ and the workshop RESEARCH/. No symlinks.
 - Push and publish are human-only. The `policies` deny is a speed bump; the sandbox withholds the credentials.
 
 Gate failure names the gate and the one thing that fixes it. No moving on.

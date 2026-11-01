@@ -1,5 +1,5 @@
 /**
- * brain-log - keeps the brain alive across sessions and records what happened.
+ * brain-log - injects the rule index into every request and records a compact session log.
  *
  * 1. Injects a brain pointer + rule index into every request context
  *    (survives compaction; re-injected on the next primary step after it).
@@ -7,16 +7,11 @@
  *    event API: ctx.event.subscribe() returns an AsyncIterable, so we iterate it
  *    with `for await`; the v1 callback form never ran (see
  *    docs/audit/research/L0-plugins.md section 5).
- * 3. Counts rule usage into .harness/rule-usage.json so decay ("unused for 3
- *    projects", rule 040) becomes measurable: a rule is "used" when an agent reads
- *    its file (read tool or a shell command naming it); each mini project is
- *    stamped when a tool call first touches it. scripts/rule-report.py (/status brain)
- *    turns this into keep / DECAY per rule.
  *
  * Paths resolve from THIS file's location, never from ~/.config/opencode.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -27,31 +22,6 @@ const RULES = path.join(BRAIN, "rules")
 const RUNTIME = path.join(WORKSHOP, ".harness")
 const LOG = path.join(RUNTIME, "events.jsonl")
 const ALIVE_FILE = path.join(RUNTIME, "plugins-alive")
-const USAGE = path.join(RUNTIME, "rule-usage.json")
-
-/** A brain rule named in a tool call: a read path, or a shell command like `cat brain/rules/030-x.md`. */
-const RULE_REF = /brain\/rules\/(\d{3}-[\w-]+\.md)/g
-/** The mini project a tool call touches (never the _template scaffold). */
-const PROJECT_REF = /mini-projects\/([a-z0-9][a-z0-9_-]*)/
-
-/** Count rule reads; stamp each project when first seen. Rewrites the file only when something changed. */
-function recordUsage(rules: string[], project: string | undefined) {
-  let u: any = {}
-  try {
-    u = JSON.parse(readFileSync(USAGE, "utf8"))
-  } catch {
-    // first use (or unreadable): start fresh
-  }
-  if (!rules.length && (!project || u.projects?.[project])) return
-  const now = new Date().toISOString()
-  u.since ??= now
-  u.rules ??= {}
-  u.projects ??= {}
-  for (const r of rules) u.rules[r] = { count: (u.rules[r]?.count ?? 0) + 1, last: now }
-  if (project) u.projects[project] ??= now
-  if (!existsSync(RUNTIME)) mkdirSync(RUNTIME, { recursive: true })
-  writeFileSync(USAGE, JSON.stringify(u, null, 2) + "\n")
-}
 
 const POINTER = [
   "## BRAIN ACTIVE",
@@ -135,23 +105,6 @@ export default {
           // stream closed on unload
         }
       })()
-    } catch {
-      // ignore
-    }
-
-    // 3. rule usage + project first-seen, from completed tool calls
-    const sessionProject = String(ctx?.location?.directory ?? "").match(PROJECT_REF)?.[1]
-    try {
-      await ctx.tool.hook("execute.after", async (event: any) => {
-        try {
-          if (event?.status !== "completed") return
-          const text = JSON.stringify(event?.input ?? {})
-          const rules = ["read", "shell"].includes(event?.tool) ? [...new Set([...text.matchAll(RULE_REF)].map((m) => m[1]))] : []
-          recordUsage(rules, text.match(PROJECT_REF)?.[1] ?? sessionProject)
-        } catch {
-          // telemetry never blocks a tool call
-        }
-      })
     } catch {
       // ignore
     }

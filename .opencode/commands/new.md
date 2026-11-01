@@ -1,5 +1,5 @@
 ---
-description: Start a new mini project from your idea, any length (begin with a slug and a colon to name it). The brainstormer writes the first BRIEF.md draft and asks its questions.
+description: Start a new mini project from your idea, any length (begin with a slug and a colon to name it). It becomes the current project (later commands need no slug). The brainstormer writes the first BRIEF.md draft and asks its questions.
 agent: orchestrator
 ---
 The scaffold script already ran when the human typed this command (the idea goes in as data, never as shell code; all of it becomes the brief's GOAL). Its output:

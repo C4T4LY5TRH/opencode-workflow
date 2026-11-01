@@ -4,10 +4,10 @@ The harness lives in this repo (`.opencode/`, `brain/`, `scripts/`, `AGENTS.md`)
 `~/.config/opencode`, so moving it means moving the repo and then re-applying three small settings that live
 **outside** the repo (two of them are optional; the Anthropic key is not). `scripts/bootstrap.sh` checks all of it and prints the fix for anything missing.
 
-Round trip last verified 2026-10-25 on v3 (9 agents + 9 commands, branch `harness-v3`); v4 piece 1 (11 agents + 10 commands, branch `harness-v4`, fast-forwarded to the build branch `harness-v4-plan` when piece 1 is done) has not been moved yet; its commands below name `harness-v4`: `git bundle` → `git clone` into a
+The round trip has not been tried on v4 yet (13 agents + 11 commands, branch `harness-v4`); the commands below name `harness-v4`. The plan: `git bundle` → `git clone` into a
 folder under the home dir → `bash scripts/bootstrap.sh` all OK, `bash scripts/bench.sh` failed 0,
 `node scripts/gate-test.mjs` and `python3 scripts/state-test.py` all passed (incl. the OS sandbox cases) from the clone,
-with no runtime state, approvals or test debris carried over.
+with no runtime state, approvals or test debris carried over. Piece 2 added nothing outside the repo: the same Anthropic key, the same two optional settings, Playwright's Chromium (also used by the designer).
 
 ## What travels, and what does not
 | Travels (in the repo) | Does NOT travel (set it up again) |
@@ -15,8 +15,8 @@ with no runtime state, approvals or test debris carried over.
 | `.opencode/` agents, commands, skills, plugins, config + policies | service env `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1` |
 | `brain/`, `scripts/`, `mini-projects/_template/`, docs | policy hiding `~/.agents` skills, in `~/.config/opencode/opencode.json` |
 | full git history | opencode's saved approvals (kept empty on purpose, so start clean) |
-| | **your Anthropic API key** (opencode's auth store; v4 needs it for the Opus architect, the Sonnet brainstormer, planner, critic, builder, hunter, reviewer and brain, and the Haiku orchestrator and researcher) |
-| | `.harness/` runtime state, incl. rule-usage telemetry (`rule-usage.json`); copy it if you want `/status brain`'s decay history |
+| | **your Anthropic API key** (opencode's auth store; v4 needs it for the Opus architect and designer, the Sonnet brainstormer, planner, critic, builder, qa, hunter and reviewer, and the Haiku orchestrator and researcher) |
+| | `.harness/` runtime state, incl. the dashboard and bench history |
 | | your mini projects (each is its own repo) and their `/approve` records and step state (`.harness/` is gitignored: re-`/approve` after moving) |
 | | `.archive/` backups, your local `CLAUDE.md` (Claude Code notes, gitignored) |
 | | macOS (the agent-shell sandbox uses `/usr/bin/sandbox-exec`), node, python3, opencode itself, Playwright's Chromium |
@@ -27,7 +27,7 @@ cd ~/Projects/opencode
 git status --short                             # must be empty: a bundle carries committed files only
 bash scripts/bench.sh                          # must say passed N/N, failed 0
 git bundle create ~/harness-v4.bundle harness-v4   # one file: the v4 branch with its full history
-# want v2.2 and main too? use --all instead of harness-v4
+# want main too? use --all instead of harness-v4
 ```
 Move `~/harness-v4.bundle` to the other machine (AirDrop, USB, anything). Mini projects are separate repos:
 copy any you want (`mini-projects/<slug>/`) or push them to a remote you own.

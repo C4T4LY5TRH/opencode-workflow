@@ -76,10 +76,12 @@
     { "action": "tool.use", "resource": "edit:*.harness/*", "effect": "deny" },
     { "action": "tool.use", "resource": "shell:*approve.sh*", "effect": "deny" },
     { "action": "tool.use", "resource": "playwright_browser_run_code_unsafe:*", "effect": "deny" },
-    { "action": "tool.use", "resource": "playwright_browser_install:*", "effect": "deny" }
+    { "action": "tool.use", "resource": "playwright_browser_install:*", "effect": "deny" },
+    { "action": "tool.use", "resource": "playwright_browser_file_upload:*", "effect": "deny" },
+    { "action": "tool.use", "resource": "playwright_browser_drop:*", "effect": "deny" }
   ],
   "agent": {
-    "orchestrator": { "model": "anthropic/claude-haiku-5-5" },
+    "orchestrator": { "model": "anthropic/claude-sonnet-5-5", "variant": "low" },
     "brainstormer": { "model": "anthropic/claude-sonnet-5-5" },
     "architect": { "model": "anthropic/claude-opus-5-5" },
     "planner": { "model": "anthropic/claude-sonnet-5-5" },
@@ -89,7 +91,8 @@
     "hunter": { "model": "anthropic/claude-sonnet-5-5" },
     "skeptic": { "model": "opencode/deepseek-v4.1-flash-free" },
     "researcher": { "model": "anthropic/claude-haiku-5-5" },
-    "brain": { "model": "anthropic/claude-sonnet-5-5" },
+    "qa": { "model": "anthropic/claude-sonnet-5-5" },
+    "designer": { "model": "anthropic/claude-opus-5-5" },
     "build": { "disable": true },
     "general": { "disable": true },
     "explore": {

@@ -18,11 +18,9 @@ OpenCode Zen model for one checking role (skeptic):
 - critic: anthropic/claude-sonnet-5-5 (was opencode/nemotron-3-ultra-free, which disappeared on 2026-10-29)
 - researcher: anthropic/claude-haiku-5-5 (was opencode/nemotron-3.5-super-vl-free until the 2026-10-30 acceptance
   run, where its free usage limit failed the brainstorm's research step; Haiku also reads screenshots)
-- brain: anthropic/claude-sonnet-5-5 (was opencode/glm-5.3-flash-free, same free-limit stall in /ship; then Haiku;
-  Sonnet since 2026-10-30, with the reviewer)
 
 Families: Claude designs, builds and hunts; a non-Claude model verifies bugs (skeptic), so that checker does not share
-the builder's blind spots. Since 2026-10-25 the reviewer and brain are Claude (free limits stalled the loop;
+the builder's blind spots. Since 2026-10-25 the reviewer is Claude (free limits stalled the loop;
 Haiku first, Sonnet since 2026-10-30 because the Haiku reviewer was unsteady), since v4 the critic is Claude Sonnet
 (its free model disappeared; v4 spec §3), and since the v4 acceptance run the researcher is Claude Haiku (free
 limit): those trades were the human's call.

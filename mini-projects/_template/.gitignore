@@ -6,8 +6,12 @@ build/
 __pycache__/
 .pytest_cache/
 coverage/
+test-results/
+playwright-report/
 *.log
 .env
 .env.*
 .DS_Store
 .harness/
+*.tsbuildinfo
+.vite/

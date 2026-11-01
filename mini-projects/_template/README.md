@@ -16,5 +16,4 @@ below, so they appear only when their agent writes them.
 | review | `/go {{SLUG}}` after the last step | `REVIEW.md` (verdict and blind spots) |
 | ship | `/ship {{SLUG}}` | records the milestone; you commit; the next `/go` plans the next milestone |
 
-`/status {{SLUG}}` shows where it is. `NOTES.md` is the running log. `LEARNINGS.md` is what this project teaches the
-brain (`/ship` drafts a proposal from it).
+`/status {{SLUG}}` shows where it is. `NOTES.md` is the running log. `LEARNINGS.md` is what this project taught.

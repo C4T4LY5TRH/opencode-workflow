@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """/status text and the read-only dashboard (stdlib only).
 
-usage: python3 scripts/status.py [slug | brain | --html | <slug> --check <FILE>]
+usage: python3 scripts/status.py [slug | --html | <slug> --check <FILE>]
 
-  (none)   one line per project, the bench result, the brain line
+  (none)   one line per project and the bench result
   <slug>   one project in detail: every step, the failure text, the review
-  brain    proposals waiting in brain/proposals/ and rules flagged DECAY
   --html   write .harness/dashboard.html (self-refreshing, read-only), print nothing
   <slug> --check <FILE>   run one document's format check, print OK or ERROR: <message> (read-only; the one form
            an agent shell may run besides `<slug>`)
@@ -18,7 +17,6 @@ import html as _html
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 
@@ -64,16 +62,22 @@ def info(workshop, slug):
     """Everything shown about one project. Never raises: a project that cannot be read gets an `error`."""
     proj = os.path.join(workshop, "mini-projects", slug)
     d = {"slug": slug, "error": None, "steps": [], "review": None, "approved_at": None, "goal": _goal(proj),
-         "findings": [], "updated": None}
+         "findings": [], "updated": None, "status": slug, "autopilot": False, "cost": 0, "project_cost": 0, "batch": ""}
     try:
         ph = hs.stage(proj)
         d.update(stage=ph["stage"], step=ph["step"], done=ph["done"], total=ph["total"], reason=ph["reason"],
-                 milestone=ph["milestone"], at=ph["at"], problem=ph["error"])
+                 milestone=ph["milestone"], at=ph["at"], problem=ph["error"],
+                 batch=", ".join(f"{i['kind']} {i['n']}" for i in ph["batch"]))
         try:
             state = hs.load(proj)
         except hs.StateError:
             state = {}
-            d["error"] = f"state unreadable: /approve {slug} again"
+            d["error"] = hs.unreadable_reason(proj)
+        # the running cost and autopilot (spec 3.2), never the cap (B3); the STATUS line is next.py's, the one format
+        cost = state.get("cost") or {}
+        d.update(status=nx.status_line(slug, ph, state), autopilot=bool((state.get("autopilot") or {}).get("on")),
+                 cost=(cost.get("usd") or 0) if cost.get("milestone") == ph["milestone"] else 0,
+                 project_cost=cost.get("project_usd") or 0)
         d["steps"] = [s for s in state.get("steps", []) if isinstance(s, dict)]
         d["approved_at"] = state.get("approved_at")
         rev = state.get("review")
@@ -89,8 +93,6 @@ def info(workshop, slug):
         d.update(stage="?", step=None, done=0, total=0, reason="", milestone=None, at=None, problem=None,
                  error=f"could not read this project ({exc.__class__.__name__})")
     d["next"] = nx.next_command(slug, d["stage"], d["at"])
-    if d["error"] and d["stage"] == "APPROVE":
-        d["next"] = f"/approve {slug}"
     d["digest"] = nx.digest(workshop, slug) if d["stage"] == "DECIDE" else None
     return d
 
@@ -107,33 +109,6 @@ def bench_line(workshop):
         return "bench: last result unreadable"
 
 
-def brain(workshop):
-    """(proposal file names, DECAY rule names or None when the report could not run)."""
-    try:
-        props = sorted(n for n in os.listdir(os.path.join(workshop, "brain", "proposals")) if n != ".gitkeep")
-    except OSError:
-        props = []
-    decay = None
-    report = os.path.join(workshop, "scripts", "rule-report.py")
-    if os.path.isfile(report):
-        try:
-            r = subprocess.run([sys.executable, report], capture_output=True, text=True, timeout=10)
-            if r.returncode == 0:
-                decay = [l.split()[0] for l in r.stdout.splitlines() if re.match(r"\d{3}-\S+", l) and "DECAY" in l]
-        except (OSError, subprocess.SubprocessError):
-            pass
-    return props, decay
-
-
-def _waiting(props):
-    return f"brain: {len(props)} proposal{'' if len(props) == 1 else 's'} waiting"
-
-
-def _brain_line(props, decay):
-    line = _waiting(props)
-    return line + (f", {len(decay)} rules flagged DECAY" if decay else "") + (" (/status brain)" if props or decay else "")
-
-
 # --- text --------------------------------------------------------------------------------
 
 def _progress(d):
@@ -142,12 +117,23 @@ def _progress(d):
     return f"{d['done']}/{d['total']} steps done" if d["total"] else "no steps yet"
 
 
+def _autopilot(d):
+    return f"autopilot {'on' if d['autopilot'] else 'off'}"
+
+
+def _costs(d, milestone="this milestone", project="this project", sep=", "):
+    return f"${d['cost']:.2f} {milestone}{sep}${d['project_cost']:.2f} {project}"
+
+
 def _detail(d):
-    out = [f"{d['slug']}  {d['stage']}  {_progress(d)}"]
+    out = [f"STATUS: {d['status']}  {_autopilot(d)}", f"{d['slug']}  {d['stage']}  {_progress(d)}"]
     if d["goal"]:
         out.append(f"goal: {d['goal']}")
     if d["milestone"]:
         out.append(f"milestone: {d['milestone']}")
+    if d["batch"]:
+        out.append(f"batch: {d['batch']}")
+    out.append(f"cost: {_costs(d)}")
     out.append(d["error"] or d["reason"])
     if d["problem"] and d["stage"] != "DECIDE":
         out.append(f"problem: {d['problem']}")
@@ -172,24 +158,19 @@ def _detail(d):
 
 
 def text(workshop, slug=None):
-    if slug == "brain":
-        props, decay = brain(workshop)
-        out = [_waiting(props)] + [f"  - {p}" for p in props]
-        out.append("rules flagged DECAY (delete candidates): " + (", ".join(decay) if decay else
-                   "none" if decay is not None else "unknown (rule report did not run)"))
-        return "\n".join(out) + "\n"
     if slug:
         if not SLUG_RE.fullmatch(slug) or slug not in project_slugs(workshop):
             return f"no project mini-projects/{slug}. Try /status for the list.\n"
         return _detail(info(workshop, slug)) + "\n"
-    out = [bench_line(workshop), _brain_line(*brain(workshop))]
+    out = [bench_line(workshop)]
     slugs = project_slugs(workshop)
     if not slugs:
         out.append("no projects yet: /new \"<goal>\"")
     for s in slugs:
         d = info(workshop, s)
-        out.append(f"{s:<16} {d['stage']:<11} {_progress(d):<16} next: {d['next']}")
-        if d["error"] or d["stage"] in ("APPROVE", "STUCK"):
+        run = f"  {_autopilot(d)}  {_costs(d, 'milestone', 'project', ' / ')}" if d["autopilot"] or d["project_cost"] else ""
+        out.append(f"{s:<16} {d['stage']:<11} {_progress(d):<16} next: {d['next']}{run}")
+        if d["error"] or d["stage"] == "STUCK":
             out.append(f"{'':<16} {d['error'] or d['reason']}")
     return "\n".join(out) + "\n"
 
@@ -221,6 +202,8 @@ def _card(d):
         h.append(f'<p class="goal">{esc(d["goal"])}</p>')
     h.append(f'<progress value="{d["done"]}" max="{max(d["total"], 1)}"></progress>')
     h.append(f'<p class="{"err" if d["error"] else "dim"}">{esc(d["error"] or d["reason"])}</p>')
+    run = [_autopilot(d), _costs(d, sep=" · ")] + ([f"batch: {d['batch']}"] if d["batch"] else [])
+    h.append(f'<p class="dim">{esc(" · ".join(run))}</p>')
     cur = next((s for s in d["steps"] if not s.get("done_at")), None)
     if d["steps"]:
         h.append("<ul>")
@@ -244,15 +227,12 @@ def _card(d):
 
 
 def html(workshop):
-    props, decay = brain(workshop)
     slugs = project_slugs(workshop)
     cards = "".join(_card(info(workshop, s)) for s in slugs) or '<p class="dim">no projects yet: /new "&lt;goal&gt;"</p>'
-    names = ", ".join(props) if props else "none"
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="{REFRESH_SECONDS}">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>Harness dashboard</title>'
             f"<style>{CSS}</style></head><body><main><h1>Harness dashboard</h1>"
-            f'<p class="meta"><span>{esc(bench_line(workshop))}</span><span>proposals waiting: {len(props)} ({esc(names)})</span>'
-            f'<span>DECAY rules: {esc(", ".join(decay) if decay else "none" if decay is not None else "unknown")}</span>'
+            f'<p class="meta"><span>{esc(bench_line(workshop))}</span>'
             f"<span>read-only, refreshes every {REFRESH_SECONDS} s</span></p>{cards}</main></body></html>\n")
 
 
@@ -288,7 +268,7 @@ def main(argv):
         sys.stdout.write(check(workshop, args[0].strip(), args[2].strip()))
         return 0
     if len(args) > 1:
-        sys.stdout.write("usage: /status [project | brain]\n")
+        sys.stdout.write("usage: /status [project]\n")
         return 0
     try:
         if args == ["--html"]:

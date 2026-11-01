@@ -18,6 +18,17 @@ permission:
     "rg *": allow
     "grep *": allow
     "find *": allow
+    # fact probes (spec 6.5): exact lines, so a chain behind one still resolves to deny (bench: probes-exact)
+    "git --version": allow
+    "node --version": allow
+    "npm --version": allow
+    "npx --version": allow
+    "python3 --version": allow
+    "which *": allow
+    "pwd": allow
+    # checks its own file before it returns, text mode only (bench: orchestrator-status-only)
+    "python3 scripts/status.py *": allow
+    "python3 scripts/status.py *--html*": deny
     "git diff*": allow
     "git log*": allow
   webfetch: deny
@@ -67,7 +78,7 @@ RULES:
 
 Your job is not done until CRITIQUE.md exists on disk: write it with the write tool, then stop and report.
 Do the work FIRST, report AFTER. DID lists only files you actually wrote with a tool in this turn; if you wrote none, DID says "no file". Never describe a write you have not done.
-REPORT BACK:
+REPORT BACK (10 lines at most):
 DID: <file you wrote, or "no file">
 BASIS: <files you read, URLs, or screenshots that support this. Never an invented command.>
 BLOCKED: <what stopped you> | <the ONE thing that unblocks it>

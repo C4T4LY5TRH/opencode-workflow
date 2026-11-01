@@ -20,11 +20,11 @@ RULES = os.path.join(BRAIN, "rules")
 RUNTIME = os.path.join(WORKSHOP, ".harness")
 
 AGENTS = ["orchestrator", "brainstormer", "architect", "planner", "builder", "reviewer", "critic", "researcher",
-          "brain"]
-COMMANDS = ["new", "go", "approve", "ship", "status", "critique", "hunt", "review", "research", "brainstorm"]
+          "qa", "designer"]
+COMMANDS = ["new", "go", "approve", "ship", "status", "critique", "hunt", "review", "research", "brainstorm", "stop"]
 SKILLS = ["caveman", "browser", "visual-review", "html2md", "spec", "brain", "verify"]
 # review kit (installed 2026-10-23). These agents have strict machine-read output formats
-# (BUG-n blocks), so they do NOT use the DID/BASIS contract the 9 above carry. (v3: the kit's
+# (BUG-n blocks), so they do NOT use the DID/BASIS contract the 10 above carry. (v3: the kit's
 # code-reviewer is merged into reviewer, which writes REVIEW.md and does carry the contract.)
 KIT_AGENTS = ["hunter", "skeptic"]
 KIT_SKILLS = ["bug-hunt", "code-review"]
@@ -70,14 +70,6 @@ for f in rule_files:
     elif not any(re.match(r"^(-|\d+\.)\s+\S", l.strip()) for l in lines[1:]):
         malformed.append(f"{f}:no-rules")
 check("rules-shaped", "every rule has a title and a rule line", not malformed, ",".join(malformed))
-try:
-    rr = subprocess.run([sys.executable, os.path.join(HERE, "rule-report.py"), "--check"],
-                        capture_output=True, text=True, timeout=60)
-    check("rules-have-evals", "every rule maps to evals that exist", rr.returncode == 0,
-          "; ".join(rr.stdout.strip().splitlines()[:-1]) or rr.stderr[-200:])
-except Exception as exc:
-    check("rules-have-evals", "every rule maps to evals that exist", False, str(exc)[:120])
-
 # --- frontmatter valid + no duplicate keys (a bad one silently drops the agent/command)
 bad_fm, dup = [], []
 for folder in ("agents", "commands"):
@@ -168,6 +160,13 @@ try:
     check("config-parses", "opencode.json is valid JSON", True)
 except Exception as exc:
     check("config-parses", "opencode.json is valid JSON", False, str(exc)[:120])
+# --- the brain agent is gone (removed 2026-11-01): no agent, no model entry, no orchestrator route, no proposals folder
+orch_task = re.search(r"^\s+task:\s*\n((?:\s{4,}[^\n]*\n)+)", read(os.path.join(OPEN, "agents", "orchestrator.md")), re.M)
+brain_left = [x for x, bad in (("agent-file", os.path.exists(os.path.join(OPEN, "agents", "brain.md"))),
+                               ("model-entry", "brain" in cfg.get("agent", {})),
+                               ("orchestrator-allow", bool(orch_task and re.search(r"^\s+brain:", orch_task.group(1), re.M))),
+                               ("proposals-dir", os.path.isdir(os.path.join(BRAIN, "proposals")))) if bad]
+check("brain-agent-gone", "no brain agent, model entry, orchestrator route or proposals folder", not brain_left, ",".join(brain_left))
 pol = cfg.get("policies", [])
 pol_res = {p.get("resource") for p in pol if p.get("effect") == "deny"}
 need_pol = ["execute:*", "shell:*rm -rf /*", "shell:*git reset --hard*", "shell:*curl *--data*",
@@ -176,7 +175,7 @@ need_pol = ["execute:*", "shell:*rm -rf /*", "shell:*git reset --hard*", "shell:
             # find in a "read-only" shell must not delete or write files (-fprint covers -fprint0/-fprintf)
             "shell:*find *-delete*", "shell:*find *-fprint*", "shell:*find *-fls*",
             "edit:*.harness/*", "shell:*approve.sh*",     # plan approval is human-only
-            "playwright_browser_run_code_unsafe:*",
+            "playwright_browser_run_code_unsafe:*", "playwright_browser_file_upload:*", "playwright_browser_drop:*",
             # v3: nothing asks the trusting builder, so push and publish are human-only
             "shell:*git push*", "shell:*npm publish*", "shell:*pnpm publish*", "shell:*yarn publish*",
             "shell:*twine upload*", "shell:*gh release*"]
@@ -206,7 +205,7 @@ def agent_model(a):
 
 # --- every agent model (opencode.json) resolves against `opencode models`
 try:
-    avail = set(subprocess.run(["opencode", "models"], capture_output=True, text=True, timeout=60).stdout.split())
+    avail = set(subprocess.run(["opencode", "models", "--standalone"], capture_output=True, text=True, timeout=180).stdout.split())
 except Exception:
     avail = set()
 if avail:
@@ -259,7 +258,8 @@ global_edit = list((perm_map.get("edit") or {}).items()) if isinstance(perm_map.
 builder_edit = frontmatter_rules(read(os.path.join(OPEN, "agents", "builder.md")), "edit")
 P = "mini-projects/demo/"
 must_deny = ["PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md", "BRIEF.md", "ARCHITECTURE.md", "BRAINSTORM.md",
-             "DESIGN.md", ".env", ".env.local", "config/.env", "prod.env", ".git/config", ".git/hooks/pre-commit"]
+             "DESIGN.md", "QA.md", "VISUAL.md", "tests/acceptance/x", ".env", ".env.local", "config/.env", "prod.env",
+             ".git/config", ".git/hooks/pre-commit"]
 probes = [p for f in must_deny for p in (f, P + f, os.path.join(WORKSHOP, P + f))]
 writable = [p for p in probes if decide(p, global_edit + builder_edit) != "deny"]
 code_ok = decide(P + "src/app.js", global_edit + builder_edit) == "allow"
@@ -271,12 +271,13 @@ check("builder-cannot-write-gate-files", "builder edit denies the doc files, .en
 # --- every doc file has one owner (spec 7.2 rule 10): the ship gate trusts a REVIEW.md written by a write tool,
 #     the plan gate and the approval hash trust BRIEF/ARCHITECTURE/PLAN/CRITIQUE, and the plugin does not know
 #     which agent writes. So every agent opencode really loaded (custom and built-in) must resolve each file to
-#     deny, its owner to allow. DESIGN.md has no owner until the designer arrives (piece 2).
+#     deny, its owner to allow (QA.md: qa; DESIGN.md and VISUAL.md: designer).
 #     This covers the edit/write tools only. Shell writes (`> PLAN.md`, cp, mv, ln, interpreters) to the project
-#     root's doc files are refused for every agent by scripts/sandbox/agent.sb, proven by gate cases x41-x54 (gates-fire).
+#     root's doc files are refused for every agent by scripts/sandbox/agent.sb, proven by gate cases x41-x58 (gates-fire).
+# (--standalone: a private server reads the files on disk; the background service may hold a stale opencode.json)
 try:
-    loaded = json.loads(subprocess.run(["opencode", "debug", "agents"], capture_output=True, text=True,
-                                       timeout=60, cwd=WORKSHOP).stdout)
+    loaded = json.loads(subprocess.run(["opencode", "debug", "agents", "--standalone"], capture_output=True, text=True,
+                                       timeout=180, cwd=WORKSHOP).stdout)
 except Exception:
     loaded = []
 
@@ -291,34 +292,82 @@ def resolve(perms, action, resource):
 
 DOC_OWNER = {"REVIEW.md": "reviewer", "BRIEF.md": "brainstormer", "BRAINSTORM.md": "brainstormer",
              "ARCHITECTURE.md": "architect", "PLAN.md": "planner", "CRITIQUE.md": "critic",
-             "BUGHUNT.md": "orchestrator", "DESIGN.md": None}
+             "BUGHUNT.md": "orchestrator", "DESIGN.md": "designer", "QA.md": "qa", "VISUAL.md": "designer"}
 loaded_ids = {a.get("id") for a in loaded}
 no_owner = sorted({o for o in DOC_OWNER.values() if o and o not in loaded_ids})
 own_bad = [f"{a.get('id')}:{p}={resolve(a.get('permissions', []), 'edit', p)}"
            for a in loaded for f, owner in DOC_OWNER.items() for p in (f, P + f, os.path.join(WORKSHOP, P + f))
            if resolve(a.get("permissions", []), "edit", p) != ("allow" if a.get("id") == owner else "deny")]
-check("only-owner-writes-docs", "edit tools: each doc file writable by its owner only (shell: sandbox, gate x41-x54)",
+check("only-owner-writes-docs", "edit tools: each doc file writable by its owner only (shell: sandbox, gate x41-x58)",
       bool(loaded) and not no_owner and not own_bad,
       "could not run `opencode debug agents`" if not loaded else
       ",".join([f"owner not loaded:{o}" for o in no_owner] + own_bad[:6]))
 
+# --- fact probes (spec 6.5): the read-only agents may run exactly these version/location commands, so a model
+#     checks "is node installed?" itself instead of paying the researcher. Exact lines (no trailing `*`), so a
+#     chain such as `git --version; rm x` matches no allow line and resolves to deny; `which *` and `ls*` take
+#     an argument, and opencode's shell parser checks each command of a chain on its own.
+PROBE_ALLOW = ["git --version", "node --version", "npm --version", "npx --version", "python3 --version",
+               "which git", "pwd", "ls", "ls src"]
+PROBE_DENY = ["git --version; rm x", "node --version && rm x", "npm --version; rm x", "npx --version; rm x",
+              "python3 --version; rm x", "python3 -c 1", "node -e 1", "npm install", "npx cowsay"]
+PROBE_AGENTS = ["architect", "planner", "critic", "brainstormer", "reviewer", "orchestrator", "designer",
+                "researcher"]
+probe_bad = []
+for a in PROBE_AGENTS:
+    perms = next((x.get("permissions", []) for x in loaded if x.get("id") == a), None)
+    if perms is None:
+        probe_bad.append(f"{a}:not loaded")
+        continue
+    probe_bad += [f"{a}:{c}={resolve(perms, 'shell', c)}" for c in PROBE_ALLOW if resolve(perms, "shell", c) != "allow"]
+    probe_bad += [f"{a}:{c}={resolve(perms, 'shell', c)}" for c in PROBE_DENY if resolve(perms, "shell", c) == "allow"]
+check("probes-exact", "read-only agents allow exactly the fact probes, and not a chain behind one",
+      bool(loaded) and not probe_bad, "could not run `opencode debug agents`" if not loaded else ",".join(probe_bad[:6]))
+
+# --- the browser (piece 2 spec 6.3): tools that read files, run page code or change what the gate cannot check are
+#     denied for the designer (all of `playwright_*` otherwise) and the researcher (a short allowlist). Resolved rules
+#     as loaded, last match wins. Names are the Playwright MCP 0.0.83 tools (file_upload and drop read local files).
+BROWSER_DENY = ["evaluate", "run_code_unsafe", "route", "file_upload", "drop", "install"]
+BROWSER_ALLOW = {"designer": ["navigate", "take_screenshot", "snapshot", "click"],
+                 "researcher": ["navigate", "snapshot", "take_screenshot", "click", "type", "wait_for", "close", "resize"]}
+BROWSER_DENY_EXTRA = {"researcher": ["tabs", "hover", "fill_form"], "designer": []}
+browser_bad = []
+for a, allowed in BROWSER_ALLOW.items():
+    perms = next((x.get("permissions", []) for x in loaded if x.get("id") == a), None)
+    if perms is None:
+        browser_bad.append(f"{a}:not loaded")
+        continue
+    browser_bad += [f"{a}:{t}={resolve(perms, 'playwright_browser_' + t, '*')}" for t in allowed
+                    if resolve(perms, "playwright_browser_" + t, "*") != "allow"]
+    browser_bad += [f"{a}:{t}={resolve(perms, 'playwright_browser_' + t, '*')}"
+                    for t in BROWSER_DENY + BROWSER_DENY_EXTRA[a]
+                    if resolve(perms, "playwright_browser_" + t, "*") != "deny"]
+check("browser-tools", "designer and researcher: risky Playwright tools denied, the needed ones allowed",
+      bool(loaded) and not browser_bad, "could not run `opencode debug agents`" if not loaded else ",".join(browser_bad[:6]))
+
 # --- the orchestrator's shell runs status.py in text mode only (digest + file checks, spec H2): --html writes a
 #     file, next.py writes state, `python3 -c` runs anything. Resolved rules as loaded, last match wins.
-orch_perms = next((a.get("permissions", []) for a in loaded if a.get("id") == "orchestrator"), [])
+#     The chain writers get the same rule so each checks its own file before it returns (T15 live).
 status_probes = {"python3 scripts/status.py demo": "allow", "python3 scripts/status.py demo --check PLAN.md": "allow",
                  "python3 scripts/status.py --html": "deny", "python3 scripts/status.py demo --html": "deny",
                  "python3 scripts/next.py demo": "deny", 'python3 -c "print(1)"': "deny"}
-status_bad = [f"{c}={resolve(orch_perms, 'shell', c)}" for c, want in status_probes.items()
-              if resolve(orch_perms, "shell", c) != want]
-check("orchestrator-status-only", "orchestrator shell: status.py text mode only, no --html, no other python",
-      bool(orch_perms) and not status_bad, "orchestrator not loaded" if not orch_perms else ",".join(status_bad))
+status_bad = []
+for a in ["orchestrator", "architect", "designer", "planner", "critic"]:
+    perms = next((x.get("permissions", []) for x in loaded if x.get("id") == a), None)
+    if perms is None:
+        status_bad.append(f"{a}:not loaded")
+        continue
+    status_bad += [f"{a}:{c}={resolve(perms, 'shell', c)}" for c, want in status_probes.items()
+                   if resolve(perms, "shell", c) != want]
+check("orchestrator-status-only", "orchestrator + chain writers' shell: status.py text mode only, no --html, no other python",
+      bool(loaded) and not status_bad, "could not run `opencode debug agents`" if not loaded else ",".join(status_bad[:6]))
 
 # --- plugins present + the gates actually FIRE
 plugins = os.listdir(os.path.join(OPEN, "plugins")) if os.path.isdir(os.path.join(OPEN, "plugins")) else []
 check("plugins-present", "safety-gate + brain-log installed",
       all(p in plugins for p in ["safety-gate.ts", "brain-log.ts"]), ",".join(plugins))
 try:
-    gt = subprocess.run(["node", os.path.join(HERE, "gate-test.mjs")], capture_output=True, text=True, timeout=120)
+    gt = subprocess.run(["node", os.path.join(HERE, "gate-test.mjs")], capture_output=True, text=True, timeout=300)
     last = gt.stdout.strip().splitlines()[-1] if gt.stdout.strip() else gt.stderr[-200:]
     check("gates-fire", "safety-gate plugin fires on every gate case", gt.returncode == 0, last)
 except Exception as exc:
@@ -326,7 +375,7 @@ except Exception as exc:
 
 # --- state library (plan parsing, approval, tree hash, phase)
 try:
-    st = subprocess.run([sys.executable, os.path.join(HERE, "state-test.py")], capture_output=True, text=True, timeout=120)
+    st = subprocess.run([sys.executable, os.path.join(HERE, "state-test.py")], capture_output=True, text=True, timeout=300)
     tail = (st.stderr.strip().splitlines() or st.stdout.strip().splitlines() or [""])[-1]
     check("state-tests", "state library unit tests pass", st.returncode == 0, tail)
 except Exception as exc:

@@ -64,7 +64,7 @@ fi
 [ -z "$SLUG" ] && SLUG="project"
 case "$SLUG" in
   _*|*[!a-z0-9_-]*) echo "ERROR: slug must be lowercase letters, digits, - or _, not starting with _: $SLUG" >&2; exit 2 ;;
-  brain) echo "ERROR: slug 'brain' is reserved (/status brain shows the brain); pass another slug" >&2; exit 2 ;;
+  cap|retry) echo "ERROR: slug '$SLUG' is reserved (/go $SLUG is a command word); pass another slug" >&2; exit 2 ;;
 esac
 
 DIR="$PROJECTS/$SLUG"
@@ -84,6 +84,8 @@ done)
 python3 - "$DIR" "$SLUG" "$GOAL" <<'PY'
 import os, sys
 root, slug, goal = sys.argv[1], sys.argv[2], sys.argv[3]
+# the idea is a quote block (M6): a "## Features" typed inside it can never shadow a real section of the brief
+quoted = "\n".join("> " + line for line in goal.split("\n"))
 for base, _dirs, files in os.walk(root):
     if ".git" in base.split(os.sep):
         continue
@@ -94,7 +96,7 @@ for base, _dirs, files in os.walk(root):
                 body = fh.read()
         except Exception:
             continue
-        new = body.replace("{{SLUG}}", slug).replace("{{GOAL}}", goal)
+        new = body.replace("{{SLUG}}", slug).replace("{{GOAL}}", quoted)
         if new != body:
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write(new)
@@ -105,6 +107,9 @@ if ! (cd "$DIR" && git -c core.fsmonitor=false init -q); then
   echo "ERROR: git init failed in $DIR" >&2
   exit 1
 fi
+
+# a command typed without a project name means this one from now on (a convenience: the scaffold stands without it)
+python3 "$HERE/harness_state.py" current "$WORKSPACE" "$SLUG" || echo "note: could not remember $SLUG as the current project" >&2
 
 echo "created: $DIR"
 echo "files:   $(cd "$DIR" && ls -A | tr '\n' ' ')"

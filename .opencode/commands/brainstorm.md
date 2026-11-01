@@ -1,5 +1,5 @@
 ---
-description: Another brainstorm round - on the brief (/brainstorm <slug>; /brainstorm <slug> brief reopens a locked one) or on a topic (/brainstorm <slug> <topic>, written to BRAINSTORM.md).
+description: Another brainstorm round - on the brief (/brainstorm [slug]; /brainstorm [slug] brief reopens a locked one) or on a topic (/brainstorm [slug] <topic>, written to BRAINSTORM.md). No slug means the current project.
 agent: orchestrator
 ---
 The routing script already ran when the human typed this command (the text goes in as data, never as shell code); its contract:

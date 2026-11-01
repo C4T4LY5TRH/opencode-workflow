@@ -9,7 +9,10 @@ Anatomy (mini-projects/<slug>/) - gate files appear only when their agent writes
 - ARCHITECTURE.md - architect: STACK, STRUCTURE, DATA, FLOWS, RISKS (`- R1: risk - test: spike`), DECISIONS
   (`- D<n>: choice - rejected: x - why: y`), MILESTONES (`- M<n>: title - covers: F1, F2`; every MUST in one),
   CRITIQUE ANSWERS (`- C<n>: fixed - how` or `rejected - why`)
-- DESIGN.md - reserved for UI projects (no designer agent yet)
+- DESIGN.md - designer, UI projects: SUMMARY, DIRECTION, TOKENS, COMPONENTS, SCREENS (`- <screen>: design/mockups/<name>.html`),
+  ACCESSIBILITY, STACK FIT (`- agree` or `- object: <why>`); mockups are static HTML/CSS in design/mockups/
+- QA.md - qa: SUMMARY, TESTS (`- F<n>: tests/acceptance/<file> - <what it proves>`), RUN (one `- run:` line), VERDICT
+  (PASS | FAIL), REVISIONS; its tests live in tests/acceptance/. VISUAL.md - designer: `VERDICT: MATCH | FIX`, screenshots in design/shots/
 - PLAN.md - planner, ONE milestone: MILESTONE, SCOPE, numbered steps (files, covers, proves on M1 step 1,
   one backticked `done when` check, risk), ACCEPTANCE, CRITIQUE ANSWERS
 - CRITIQUE.md - critic, append-only `## ROUND n - M<k>`, points `- C<n> [serious|minor] [target] text - fix: ...`
@@ -21,5 +24,6 @@ Anatomy (mini-projects/<slug>/) - gate files appear only when their agent writes
 
 - Each mini project is its OWN git repo, nested in the workshop (gitignored by it).
 - The workshop repo holds the harness only. Do not commit project code into it.
-- Doc files (BRIEF, BRAINSTORM, ARCHITECTURE, DESIGN, PLAN, REVIEW, CRITIQUE, BUGHUNT, NOTES, LEARNINGS, README,
-  AGENTS, RESEARCH/) do not count as code: editing them does not make a review stale.
+- Doc files (BRIEF, BRAINSTORM, ARCHITECTURE, DESIGN, PLAN, REVIEW, CRITIQUE, BUGHUNT, QA, VISUAL, NOTES, LEARNINGS,
+  AGENTS, RESEARCH/, requests/) do not count as code: editing them does not make a review stale. README.md DOES count
+  (a step that changes docs lists README.md).

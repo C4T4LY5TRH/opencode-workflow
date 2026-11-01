@@ -4,11 +4,12 @@
 //
 //   node scripts/gate-test.mjs        (Node 22+ runs the .ts plugin directly)
 //
-// Scope: what the PLUGIN owns (ship gate, plan gate + approval, write confinement, step/review recording,
-// v4: the circuit breaker, one delegation at a time, the /go lock clean-up at a delegating turn's end),
+// Scope: what the PLUGIN owns (ship gate, plan gate + approval, write confinement, check/verdict recording through
+// one write queue, the circuit breaker, at most 3 open delegations, each builder confined to its step, the /go lock
+// refresh and its clean-up at a delegating turn's end, the autopilot loop that only ever sends /go, cost per project
+// and milestone, the designer's browser limits),
 // scripts/approve.sh (the only writer of the approval the plan gate reads), and the
-// OS sandbox for agent shells (shell hook + scripts/sandbox/, run for real; macOS),
-// brain-log's rule-usage telemetry, and the decay verdict of scripts/rule-report.py.
+// OS sandbox for agent shells (shell hook + scripts/sandbox/, run for real; macOS).
 // Destructive commands are the policy layer's job; scripts/bench.py checks those.
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -98,7 +99,7 @@ for (const proj of spec.approve) {
   const r = approve(path.basename(proj))
   if (r.status !== 0) throw new Error(`approve.sh failed for ${proj}: ${r.stdout} ${r.stderr}`)
 }
-// one project stays in v3 mode: a recorded plan hash and steps, no brief lock and no ARCHITECTURE.md (Task 7 uses it)
+// one v3 project: a recorded plan hash and steps, no approval hash (v3 mode is gone: the plan gate refuses it)
 {
   const dir = path.join(root, "mini-projects", "v3mode")
   fs.mkdirSync(path.join(dir, "src"), { recursive: true })
@@ -218,7 +219,8 @@ for (const c of [...spec.cases, ...spec.v4docs.map((v) => ({ ...v, id: `v4docs/$
   const input = JSON.parse(JSON.stringify(c.input).replaceAll("$ROOT_CASE", ROOT_CASE).replaceAll("$ROOT", root))
   let got = "allow", msg = ""
   try {
-    await h["execute.before"]({ tool: c.tool, input, agent: "builder", sessionID: "s", id: "t", messageID: "m" })
+    // these gates hold for every agent; the builder/qa/designer write scopes have their own section below
+    await h["execute.before"]({ tool: c.tool, input, agent: c.agent ?? "any", sessionID: "s", id: "t", messageID: "m" })
   } catch (e) {
     got = "block"
     msg = String(e?.message)
@@ -256,8 +258,12 @@ for (const section of ["breaker", "parallel", "lock"]) {
   const before = async (e) => {
     try { await h["execute.before"](e); return "" } catch (err) { return String(err?.message ?? err) || "refused" }
   }
+  // "running": the host moved the call to the background (L124); its child is `<session>-child`
+  const bgOut = (e) => ({ sessionID: `${e.sessionID}-child`, status: "running", output: "" })
   const after = (e, status = "completed") =>
-    h["execute.after"]?.(status === "error" ? { ...e, status, error: new Error("x") } : { ...e, status, result: { output: "ok" } })
+    h["execute.after"]?.(status === "error" ? { ...e, status, error: new Error("x") }
+      : status === "running" ? { ...e, status: "completed", result: { output: bgOut(e), metadata: bgOut(e) } }
+      : { ...e, status, result: { output: "ok" } })
   const open = new Map()
   for (const op of spec[section]) {
     const problems = []
@@ -352,7 +358,7 @@ for (const op of spec.steps.ops) {
     }
     if (e.last_failure) {
       const lf = st.steps?.[e.last_failure.step]?.last_failure
-      if (e.last_failure.contains ? !String(lf).includes(e.last_failure.contains) : lf !== lines(e.last_failure.from, e.last_failure.to)) {
+      if (e.last_failure.contains ? !String(lf).includes(e.last_failure.contains) : lf !== (e.last_failure.prefix ?? "") + lines(e.last_failure.from, e.last_failure.to)) {
         problems.push(`last_failure ${JSON.stringify(lf)?.slice(0, 60)}`)
       }
     }
@@ -363,9 +369,245 @@ for (const op of spec.steps.ops) {
   for (const p of op.expect.unchanged ?? []) if (stepState(p) !== before[p]) problems.push(`${p} changed`)
   report(op.id, problems.length === 0, "ok", problems.length ? "wrong" : "ok", `${op.note}${problems.length ? " :: " + problems.join("; ") : ""}`)
 }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const created = (sid, parent, title, agent) =>
+  pushEvent({ id: `evt_${++callNo}`, type: "session.created", created: Date.now(), data: { sessionID: sid, parentID: parent, title, agent } })
+/** One op of execute.before calls: each call's allow/block (and message_has) against what it expects. */
+async function beforeCalls(label, h, sid, op) {
+  const problems = []
+  for (const c of op.calls) {
+    const input = JSON.parse(JSON.stringify(c.input).replaceAll("$ROOT", root))
+    let got = "allow", msg = ""
+    try {
+      await h["execute.before"]({ tool: c.tool, input, agent: c.agent, sessionID: sid(c.sid), id: `call_${++callNo}`, messageID: "m" })
+    } catch (e) {
+      got = "block"
+      msg = String(e?.message)
+    }
+    const what = `${c.agent} ${c.input.path ?? c.input.command ?? c.input.url ?? c.input.filename ?? "(no filename)"}`.replace("$ROOT/", "")
+    if (got !== c.expect) problems.push(`${what}: ${got}${msg ? " (" + msg.slice(0, 90) + ")" : ""}`)
+    else if (c.message_has && !msg.includes(c.message_has)) problems.push(`${what}: wrong reason: ${msg.slice(0, 120)}`)
+  }
+  report(label, problems.length === 0, "ok", problems.length ? "wrong" : "ok", `${op.note}${problems.length ? " :: " + problems.join("; ") : ""}`)
+}
+
+// step scope (Review Focus 3, 4): a builder child is tied to its step by its session title (= the delegation's
+// description, CHILD_TIE "title"), from session.created or, when that event was missed, ctx.session.get
+{
+  const S = spec.scope, dir = path.join(root, "mini-projects", S.project)
+  fs.mkdirSync(dir, { recursive: true })
+  v4Project(dir, S.steps)
+  const r = approve(S.project)
+  if (r.status !== 0) throw new Error(`approve.sh failed for ${S.project}: ${r.stdout} ${r.stderr}`)
+  const sid = (s) => `scope:${s}`
+  const rootH = await hooks("")
+  const getH = {} // an instance that only knows the child bg3 through ctx.session.get (as after a restart)
+  await plugin.setup({
+    location: { directory: root },
+    tool: { hook: async (n, cb) => { getH[n] = cb } },
+    shell: { hook: async () => {} },
+    session: {
+      hook: async () => {},
+      get: async ({ sessionID }) => (sessionID === sid("bg3") ? { id: sessionID, title: `${S.project}: step 3`, parentID: sid("sroot") } : undefined),
+    },
+    event: { subscribe },
+  })
+  for (const [c, p, title, agent] of S.created) created(sid(c), sid(p), title, agent)
+  await sleep(20)
+  const snap = path.join(dir, ".harness", "snapshot.json")
+  for (const op of S.ops) {
+    if (op.snapshot) fs.writeFileSync(snap, JSON.stringify({ files: {}, at: "t", ...op.snapshot }))
+    else if ("snapshot" in op) fs.rmSync(snap, { force: true })
+    await beforeCalls(`scope/${op.id}`, op.instance === "get" ? getH : rootH, sid, op)
+  }
+}
+
+// the designer's browser (spec 9.3 fact 6, ruling C5+): navigation only to its project's preview port, screenshot files
+// only in its project's design/shots/ (a relative name is the WORKSHOP's, the MCP's cwd); no other agent saves a file
+{
+  const B = spec.browser, dir = path.join(root, "mini-projects", B.project), sid = (s) => `br:${s}`
+  fs.mkdirSync(path.join(dir, ".harness"), { recursive: true })
+  fs.mkdirSync(path.join(dir, "design", "shots"), { recursive: true })
+  fs.writeFileSync(path.join(dir, ".harness", "state.json"), JSON.stringify({ port: B.port }))
+  for (const [link, to] of B.symlinks) fs.symlinkSync(to.replace("$ROOT", root), path.join(dir, link))
+  for (const [c, p, title, agent] of B.created) created(sid(c), sid(p), title, agent)
+  await sleep(20)
+  for (const op of B.ops) await beforeCalls(op.id, await hooks(""), sid, op)
+}
+
+// cost and the autopilot loop (spec 3.2, 9.3 facts 1, 7, 8; Review Focus 2, 3): turn events and delegations through
+// instances whose ctx.session records every command() call. "instance": "fresh" is a restarted plugin (empty maps).
+{
+  const L = spec.loop, sid = (s) => `loop:${s}`, sent = []
+  // ctx.session.get answers only in the CURRENT instance (a restarted plugin replaces the old one; the old instance
+  // stays subscribed here, which the host would not do): the loop's sessions live in the workshop directory
+  let current = null
+  const instance = async () => {
+    const h = {}, me = {}
+    current = me
+    await plugin.setup({
+      location: { directory: root },
+      tool: { hook: async (n, cb) => { h[n] = cb } },
+      shell: { hook: async () => {} },
+      session: {
+        hook: async () => {},
+        command: async (args) => { sent.push(args) },
+        get: async ({ sessionID }) => (current === me && sessionID.startsWith("loop:") ? { id: sessionID, location: { directory: root } } : undefined),
+      },
+      event: { subscribe },
+    })
+    return h
+  }
+  for (const slug of L.projects) {
+    const dir = path.join(root, "mini-projects", slug)
+    fs.mkdirSync(dir, { recursive: true })
+    v4Project(dir, [["hello", "hello.txt", "true"]]) // M1 is the current milestone
+  }
+  const ALIVE = path.join(root, ".harness", "plugins-alive")
+  const lockOf = (slug) => path.join(root, "mini-projects", slug, ".harness", "lock")
+  const at = (doc, p) => p.split(".").reduce((o, k) => (o == null ? undefined : o[k]), doc)
+  let h = await instance()
+  for (const op of L.ops) {
+    if (op.instance === "fresh") h = await instance()
+    for (const [rel, body] of Object.entries(op.files ?? {})) fs.writeFileSync(path.join(root, rel), body)
+    for (const [slug, set] of Object.entries(op.set ?? {})) {
+      const f = path.join(root, "mini-projects", slug, ".harness", "state.json")
+      fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, "utf8")), ...set }))
+    }
+    // next.py's lock: {stage, at} in whole seconds, written by the /go template just before its turn starts
+    const lockAt = (slug) => new Date(Date.now() - 1000 * (op.lock_age_s?.[slug] ?? 0)).toISOString().replace(/\.\d+Z$/, "Z")
+    for (const slug of op.locks ?? []) fs.writeFileSync(lockOf(slug), JSON.stringify({ stage: "BUILD", at: lockAt(slug) }))
+    fs.rmSync(ALIVE, { force: true })
+    sent.length = 0
+    const problems = []
+    const ev = (type, s, data = {}) => pushEvent({ id: `evt_${++callNo}`, type, created: Date.now(), data: { sessionID: sid(s), ...data } })
+    for (const [kind, s, a, title] of op.seq) {
+      if (kind === "created") ev("session.created", s, { parentID: a ? sid(a) : undefined, title })
+      else if (kind === "start") ev("session.execution.started", s)
+      else if (kind === "end") ev(`session.execution.${a}`, s)
+      else if (kind === "usage") ev("session.usage.updated", s, { cost: a })
+      else if (kind === "wait") await sleep(s)
+      else if (kind === "tool") { // a read by a worker child: refreshes its project's lock
+        await h["execute.before"]({ tool: "read", input: { filePath: path.join(root, "mini-projects", "apa", "PLAN.md") }, agent: "builder", sessionID: sid(s), id: `call_${++callNo}`, messageID: "m" })
+      }
+      else if (kind === "check_sent") {
+        await sleep(300)
+        if (sent.length !== s) problems.push(`${sent.length} command() calls while a slot still runs`)
+      } else { // delegate | delegate_bg | open: one subagent call from the root, completed (or moved to the background,
+        // or still running: no execute.after)
+        const e = { tool: "subagent", input: { agent: "builder", description: a, prompt: "x" }, agent: "orchestrator", sessionID: sid(s), id: `call_${++callNo}`, messageID: "m" }
+        await h["execute.before"](e)
+        if (kind === "open") continue
+        const out = { sessionID: `${sid(s)}-child`, status: "running", output: "" }
+        await h["execute.after"](kind === "delegate_bg" ? { ...e, status: "completed", result: { output: out, metadata: out } } : { ...e, status: "completed", result: { output: "ok" } })
+      }
+      await sleep(5) // the plugin's event loop runs between ticks
+    }
+    const check = () => {
+      const p = []
+      const want = (op.sent ?? []).map(([s, slug]) => JSON.stringify({ sessionID: sid(s), name: "go", text: slug, delivery: "queue" }))
+      const got = sent.map((a) => JSON.stringify(a))
+      if (JSON.stringify(got) !== JSON.stringify(want)) p.push(`command() calls ${got.join(" ") || "none"}`)
+      for (const x of op.state ?? []) {
+        let doc = {}
+        try { doc = JSON.parse(fs.readFileSync(path.join(root, "mini-projects", x.project, ".harness", "state.json"), "utf8")) } catch {}
+        const v = at(doc, x.path)
+        if (JSON.stringify(v) !== JSON.stringify(x.eq)) p.push(`${x.project} ${x.path} = ${JSON.stringify(v)}`)
+      }
+      let alive = ""
+      try { alive = fs.readFileSync(ALIVE, "utf8") } catch {}
+      for (const s of op.alive_has ?? []) if (!alive.includes(s)) p.push(`plugins-alive has no note naming ${s}`)
+      for (const slug of op.locks_after ? op.locks ?? [] : []) {
+        const want = typeof op.locks_after === "string" ? op.locks_after : op.locks_after[slug]
+        if (want && fs.existsSync(lockOf(slug)) !== (want === "present")) p.push(`${slug} lock ${want === "present" ? "gone" : "still there"}`)
+      }
+      return p
+    }
+    let late = check() // cost writes wait on a python call: poll (up to 10 s under load), but give a wrong late write time to land first
+    for (let i = 0; i < 200 && (i < 8 || late.length); i++) {
+      await sleep(50)
+      late = check()
+    }
+    problems.push(...late)
+    if (op.go_after) { // the human's next /go (the fixture copy of next.py): not refused by a leftover lock
+      const r = spawnSync("python3", [path.join(root, "scripts", "next.py"), op.go_after], { env: human, encoding: "utf8" })
+      if (r.status !== 0 || r.stdout.includes("a chain is running")) problems.push(`/go ${op.go_after} refused: ${(r.stdout + r.stderr).trim().split("\n").slice(-2).join(" ")}`)
+    }
+    report(`loop/${op.id}`, problems.length === 0, "ok", problems.length ? "wrong" : "ok", `${op.note}${problems.length ? " :: " + problems.join("; ") : ""}`)
+  }
+}
+
+// ap8: the plugin may only ever send /go (spec 3.2): the source has exactly one command( call, its name the literal "go"
+{
+  const src = fs.readFileSync(PLUGIN, "utf8")
+  const calls = [...src.matchAll(/command\s*\(/g)]
+  const args = calls.length === 1 ? src.slice(calls[0].index, src.indexOf(")", calls[0].index)) : ""
+  const names = [...args.matchAll(/\bname\s*:\s*([^,}\s]+)/g)].map((m) => m[1])
+  const ok = calls.length === 1 && JSON.stringify(names) === JSON.stringify(['"go"'])
+  report("loop/ap8", ok, "ok", ok ? "ok" : "wrong", `static: exactly one command( call in the plugin and its name is the literal "go" :: ${calls.length} call(s), name ${names.join(" ") || "none"}`)
+}
+
+// recording (spec 6.3): step checks, VERIFY runs, the acceptance run, QA/VISUAL/REVIEW verdicts, all through one
+// write queue; and the lock refresh. Projects are written here (after the lock section, which deletes every lock).
+{
+  const R = spec.record
+  const hashOf = (fn, slug) => spawnSync("python3", ["-c", "import sys; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]); " +
+    "import harness_state as h; print(getattr(h, sys.argv[2])(sys.argv[3]))", HERE, fn, path.join(root, "mini-projects", slug)], { encoding: "utf8" }).stdout.trim()
+  for (const [slug, p] of Object.entries(R.projects)) {
+    const dir = path.join(root, "mini-projects", slug)
+    fs.mkdirSync(path.join(dir, ".harness"), { recursive: true })
+    for (const [rel, body] of Object.entries(p.files ?? {})) {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+      fs.writeFileSync(path.join(dir, rel), body)
+    }
+    const st = JSON.stringify(p.state, null, 2) // "$TREE": the project's tree hash as its files stand now
+    fs.writeFileSync(path.join(dir, ".harness", "state.json"), st.includes('"$TREE"') ? st.replaceAll('"$TREE"', JSON.stringify(hashOf("tree_sha256", slug))) : st)
+  }
+  const h = await hooks("")
+  const sid = (s) => `rec:${s}`
+  const at = (doc, p) => p.split(".").reduce((o, k) => (o == null ? undefined : o[Array.isArray(o) ? Number(k) : k]), doc)
+  for (const op of R.ops) {
+    for (const [rel, body] of Object.entries(op.files ?? {})) fs.writeFileSync(path.join(root, rel), body)
+    for (const [c, p, title, agent] of op.created ?? []) created(sid(c), sid(p), title, agent)
+    if (op.created) await sleep(20)
+    const fire = (c) => {
+      const input = JSON.parse(JSON.stringify(c.input).replaceAll("$ROOT", root))
+      const ev = { tool: c.tool, input, agent: c.agent, sessionID: sid(c.sid), id: `call_${++callNo}`, messageID: "m" }
+      if (c.hook === "before") return h["execute.before"](ev).catch(() => {})
+      if (c.status === "error") return h["execute.after"]({ ...ev, status: "error", error: { message: c.error ?? "x" } })
+      const r = c.result ?? {}
+      return h["execute.after"]({ ...ev, status: "completed", result: { output: { ...r }, metadata: r.exit === undefined ? {} : { exit: r.exit } } })
+    }
+    if (op.together) await Promise.all(op.calls.map(fire))
+    else for (const c of op.calls) await fire(c)
+    const problems = []
+    for (const x of op.expect) {
+      const rel = x.file ?? ".harness/state.json"
+      let doc
+      try {
+        doc = JSON.parse(fs.readFileSync(path.join(root, "mini-projects", x.project, rel), "utf8"))
+      } catch {
+        problems.push(`${x.project}/${rel} unreadable`)
+        continue
+      }
+      const v = at(doc, x.path)
+      const want = x.eq === "$TREE" ? hashOf("tree_sha256", x.project) : x.eq === "$TESTS" ? hashOf("tests_sha256", x.project) : x.eq
+      const ok = "set" in x ? (v != null) === x.set
+        : "eq" in x ? JSON.stringify(v) === JSON.stringify(want)
+        : "ne" in x ? v !== x.ne
+        : "starts" in x ? typeof v === "string" && v.startsWith(x.starts)
+        : "all" in x ? Array.isArray(v) && v.length === x.len && v.every((s) => s && s[x.all])
+        : false
+      if (!ok) problems.push(`${x.project} ${x.path} = ${(JSON.stringify(v) ?? "undefined").slice(0, 70)}`)
+    }
+    report(`record/${op.id}`, problems.length === 0, "ok", problems.length ? "wrong" : "ok", `${op.note}${problems.length ? " :: " + problems.join("; ") : ""}`)
+  }
+}
+
 // what the plugin wrote must still pass the state library's strict load()
+const written = [...spec.steps.projects, ...Object.keys(spec.record.projects), spec.scope.project]
 const loadAll = spawnSync("python3", ["-c", "import sys; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]); import harness_state as h\n" +
-  "[h.load(p) for p in sys.argv[2:]]", HERE, ...spec.steps.projects.map((p) => path.join(root, "mini-projects", p))], { encoding: "utf8" })
+  "[h.load(p) for p in sys.argv[2:]]", HERE, ...written.map((p) => path.join(root, "mini-projects", p))], { encoding: "utf8" })
 report("k14", loadAll.status === 0, "ok", loadAll.status === 0 ? "ok" : "wrong", `state written by the plugin passes harness_state.load()${loadAll.status ? " :: " + loadAll.stderr.trim().split("\n").pop() : ""}`)
 
 // Tools that resolve paths from their own file location run as COPIES inside the fixture,
@@ -377,11 +619,10 @@ const okCase = (id, ok, note) => report(id, ok, "ok", ok ? "ok" : "wrong", note)
 // dashboard: the plugin's detached `status.py --html` spawns (after step results, after a review) write the
 // FIXTURE dashboard; wait for the detached children to finish so nothing writes after the fixture is removed
 const DASH = path.join(root, ".harness", "dashboard.html")
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const readDash = () => { try { return fs.readFileSync(DASH, "utf8") } catch { return "" } }
-const settle = async (want) => { // want(page) true, then the file is stable and no .tmp is left
+const settle = async (want) => { // want(page) true, then the file is stable and no .tmp is left (up to 15 s under load)
   let last = "", still = 0
-  for (let i = 0; i < 100 && still < 4; i++) {
+  for (let i = 0; i < 300 && still < 4; i++) {
     await sleep(50)
     const page = readDash(), tmp = fs.existsSync(path.dirname(DASH)) && fs.readdirSync(path.dirname(DASH)).some((f) => f.endsWith(".tmp"))
     still = page && want(page) && page === last && !tmp ? still + 1 : 0
@@ -401,47 +642,6 @@ const revPage = await settle((p) => p.includes("stepr"))
 okCase("s2", revPage.includes("stepr"), "dashboard: the plugin's spawn after a review record rewrites it")
 
 
-// brain-log telemetry: replay tool calls through execute.after, then read the fixture's rule-usage.json
-copyIn(".opencode/plugins/brain-log.ts")
-const brainLog = (await import(pathToFileURL(path.join(root, ".opencode/plugins/brain-log.ts")).href)).default
-const afterFor = new Map()
-for (const call of spec.telemetry.calls) {
-  if (!afterFor.has(call.session)) {
-    const h = {}
-    await brainLog.setup({
-      location: { directory: path.join(root, call.session) },
-      tool: { hook: async (n, cb) => { h[n] = cb } },
-      session: { hook: async () => {} },
-      event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {} }) },
-    })
-    afterFor.set(call.session, h)
-  }
-  const input = JSON.parse(JSON.stringify(call.input).replaceAll("$ROOT", root))
-  await afterFor.get(call.session)["execute.after"]?.({
-    tool: call.tool, input, status: call.status, agent: "builder", sessionID: "s", id: "t", messageID: "m",
-  })
-}
-let usage = {}
-try {
-  usage = JSON.parse(fs.readFileSync(path.join(root, ".harness", "rule-usage.json"), "utf8"))
-} catch {}
-const t = spec.telemetry
-okCase("t1", Object.entries(t.expect_rules).every(([r, n]) => usage.rules?.[r]?.count === n),
-  "telemetry: rule reads counted (read tool + shell cat)")
-okCase("t2", t.not_counted.every((r) => !usage.rules?.[r]), "telemetry: a failed read is not counted")
-okCase("t3", JSON.stringify(Object.keys(usage.projects ?? {}).sort()) === JSON.stringify([...t.expect_projects].sort()),
-  "telemetry: projects recorded from paths and session dir, never _template")
-
-// rule-report: decay verdicts on a crafted usage file
-for (const rel of ["scripts/rule-report.py", "brain/rules", "brain/evals/bench.yaml", ".opencode/opencode.json"]) copyIn(rel)
-fs.writeFileSync(path.join(root, ".harness", "rule-usage.json"), JSON.stringify(spec.decay.usage))
-const rep = spawnSync("python3", [path.join(root, "scripts", "rule-report.py")], { encoding: "utf8" })
-const line = (rule) => rep.stdout.split("\n").find((l) => l.startsWith(rule)) ?? ""
-okCase("d1", rep.status === 0 && spec.decay.decay.every((r) => line(r).includes("DECAY")),
-  "rule-report: unused for 3+ new projects -> DECAY")
-okCase("d2", rep.status === 0 && spec.decay.keep.every((r) => line(r) && !line(r).includes("DECAY")),
-  "rule-report: recently used or always-on rules are kept")
-
-const total = spec.cases.length + spec.v4docs.length + spec.breaker.length + spec.parallel.length + spec.lock.length + scriptCases.length + spec.sandbox.length + spec.steps.ops.length + 1 + 5 + 2
+const total = spec.cases.length + spec.v4docs.length + spec.breaker.length + spec.parallel.length + spec.lock.length + scriptCases.length + spec.sandbox.length + spec.steps.ops.length + spec.scope.ops.length + spec.browser.ops.length + spec.loop.ops.length + 1 + spec.record.ops.length + 1 + 2
 console.log(`\ngate-test: ${total - fail}/${total} passed`)
 process.exit(fail ? 1 : 0)

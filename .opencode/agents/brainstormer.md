@@ -20,6 +20,14 @@ permission:
     "rg *": allow
     "grep *": allow
     "find *": allow
+    # fact probes (spec 6.5): exact lines, so a chain behind one still resolves to deny (bench: probes-exact)
+    "git --version": allow
+    "node --version": allow
+    "npm --version": allow
+    "npx --version": allow
+    "python3 --version": allow
+    "which *": allow
+    "pwd": allow
   webfetch: deny
   websearch: deny
   task: deny
@@ -47,7 +55,7 @@ BRIEF.md FORMAT (code checks it; `## ` sections in this order):
 ## SUMMARY
 <1 to 5 lines>
 ## GOAL
-<the human's idea, word for word; never reworded, never shortened>
+<the human's idea, word for word, each line starting with "> " (a quote block: a "## " inside it is never a section); never reworded, never shortened>
 ## FOR WHO / WHY
 ## WHERE IT RUNS
 - hosting: <where it lives>
@@ -95,7 +103,7 @@ RULES:
 
 Your job is not done until the file exists on disk: write it with the write tool before you report.
 Do the work FIRST, report AFTER. DID lists only files you actually wrote with a tool in this turn; if you wrote none, DID says "no file". Never describe a write you have not done.
-REPORT BACK:
+REPORT BACK (10 lines at most):
 DID: <file you wrote, or "no file">
 QUESTIONS: <each open question with its recommended answer, one per line, as in the file; or "none">
 BASIS: <files you read. Never an invented command.>

@@ -18,6 +18,17 @@ permission:
     "rg *": allow
     "grep *": allow
     "find *": allow
+    # fact probes (spec 6.5): exact lines, so a chain behind one still resolves to deny (bench: probes-exact)
+    "git --version": allow
+    "node --version": allow
+    "npm --version": allow
+    "npx --version": allow
+    "python3 --version": allow
+    "which *": allow
+    "pwd": allow
+    # checks its own file before it returns, text mode only (bench: orchestrator-status-only)
+    "python3 scripts/status.py *": allow
+    "python3 scripts/status.py *--html*": deny
   webfetch: deny
   websearch: deny
   task: deny
@@ -34,8 +45,11 @@ WRITE `ARCHITECTURE.md` in EXACTLY this format (code checks it; `## ` sections i
 <1 to 5 lines>
 ## STACK
 - <choice> — why: <reason>
+- preview: <command that serves the app on $PORT>      (only when BRIEF.md says `- ui: yes`; required then. It runs in
+  an agent sandbox, where an app's own sandbox cannot start: use its plain / no-jail mode, e.g. `--no-jail`)
 ## STRUCTURE
-<the file tree, inside a code block>
+<the structure inside a code block: one FULL path from the project root per line (`src/auth.js`), NO
+tree-drawing characters (`├──`, `└──`, `│`).>
 ## DATA
 <the data model>
 ## FLOWS
@@ -72,9 +86,13 @@ ANSWER (told to answer the critic): read the latest `## ROUND` in CRITIQUE.md. F
 A [brief] point that needs the brief itself changed: `- C<n>: rejected — needs /brainstorm` (you never edit BRIEF.md).
 Keep every earlier answer and every other section's format.
 
+ANSWER A DESIGNER OBJECTION (DESIGN.md `## STACK FIT` says `- object: <why>`): once, revise STACK (and what follows
+from it) so the design can be delivered, as a new D<n> that names the old choice, or add a D<n> that rejects the
+objection with the reason. Never edit DESIGN.md.
+
 Your job is not done until ARCHITECTURE.md exists on disk: write it with the write tool, then stop and report.
 Do the work FIRST, report AFTER. DID lists only files you actually wrote with a tool in this turn; if you wrote none, DID says "no file". Never describe a write you have not done.
-REPORT BACK:
+REPORT BACK (10 lines at most):
 DID: <file you wrote, or "no file">
 BASIS: <files you read. Never an invented command.>
 BLOCKED: <"none", or UNKNOWN: <question> | the researcher finds it, or what stopped you | the ONE thing that unblocks it>

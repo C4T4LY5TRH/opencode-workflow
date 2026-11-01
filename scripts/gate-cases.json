@@ -40,6 +40,8 @@
     "mini-projects/lockq/src/.keep",
     "home/locks/lock",
     "mini-projects/docsh/PLAN.md",
+    "mini-projects/docsh/QA.md",
+    "mini-projects/docsh/VISUAL.md",
     "mini-projects/docsh/src/.keep"
   ],
   "cases": [
@@ -207,6 +209,30 @@
       },
       "expect": "allow",
       "note": "doc write allowed without a plan"
+    },
+    {
+      "id": "dm1",
+      "session": "mini-projects/bare",
+      "agent": "designer",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/design/mockups/a.html",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "final review C1: the designer writes its mockups before approval (a new project has no PLAN.md yet)"
+    },
+    {
+      "id": "dm2",
+      "session": "mini-projects/bare",
+      "agent": "builder",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/bare/design/mockups/a.html",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "final review C1: a builder writing the same path is still refused"
     },
     {
       "id": "p6",
@@ -561,8 +587,8 @@
         "path": "$ROOT/brain/proposals/x.md",
         "content": "x"
       },
-      "expect": "allow",
-      "note": "root session: brain/proposals/ is writable (agent permissions decide who)"
+      "expect": "block",
+      "note": "root session: brain/proposals/ is gone, no longer a writable path"
     },
     {
       "id": "w8",
@@ -1397,101 +1423,72 @@
       "command": "ln -s . self && echo x > self/PLAN.md",
       "expect": "block",
       "note": "sandbox rule 10: a symlinked folder does not reach the root PLAN.md (the sandbox sees the resolved path)"
+    },
+    {
+      "id": "x55",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "echo x > QA.md",
+      "expect": "block",
+      "note": "sandbox rule 10: QA.md is qa's file; an agent shell cannot write it"
+    },
+    {
+      "id": "x56",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "echo x > visual.md",
+      "expect": "block",
+      "note": "sandbox rule 10: VISUAL.md (the designer's verdict) is refused in another letter case"
+    },
+    {
+      "id": "x57",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "echo x > Qa.MD",
+      "expect": "block",
+      "note": "sandbox rule 10: mixed-case Qa.MD is still QA.md"
+    },
+    {
+      "id": "x58",
+      "session": "mini-projects/docsh",
+      "agent": true,
+      "command": "mkdir -p hl2 && ln VISUAL.md hl2/VISUAL.md",
+      "expect": "block",
+      "note": "sandbox rule 10: no hard link to the root VISUAL.md"
+    },
+    {
+      "id": "x59",
+      "session": "mini-projects/gittmp",
+      "agent": true,
+      "command": "d=$(mktemp -d) && git init -q \"$d/w\" && echo x > \"$d/w/a\" && git -C \"$d/w\" add a && git -C \"$d/w\" commit -qm x && rm -rf \"$d\"",
+      "expect": "allow",
+      "note": "sandbox T15: a throwaway repo in the temp dir works (tests of git tools need git init there)"
+    },
+    {
+      "id": "x60",
+      "session": "mini-projects/gittmp",
+      "agent": true,
+      "command": "d=/private/tmp/gate-x60-$$ && git init -q \"$d\" && rm -rf \"$d\"",
+      "expect": "allow",
+      "note": "sandbox T15: same in /private/tmp"
+    },
+    {
+      "id": "x61",
+      "session": "mini-projects/gittmp",
+      "agent": true,
+      "command": "d=$(mktemp -d) && ln -s \"$PWD/.git\" \"$d/lnk\" && echo x >> \"$d/lnk/config\"",
+      "expect": "block",
+      "note": "sandbox T15: a temp symlink to the project's .git still lands on the denied real path"
+    },
+    {
+      "id": "x62",
+      "session": "mini-projects/gittmp",
+      "agent": true,
+      "command": "d=$(mktemp -d) && printf 'gitdir: %s/.git\\n' \"$PWD\" > \"$d/.git\" && git -C \"$d\" config core.fsmonitor x",
+      "expect": "block",
+      "note": "sandbox T15: a temp gitfile pointing at the project's .git cannot change its config"
     }
   ],
-  "telemetry": {
-    "calls": [
-      {
-        "session": "",
-        "tool": "read",
-        "input": {
-          "path": "$ROOT/brain/rules/030-research.md"
-        },
-        "status": "completed"
-      },
-      {
-        "session": "",
-        "tool": "shell",
-        "input": {
-          "command": "cat brain/rules/030-research.md brain/rules/010-voice.md"
-        },
-        "status": "completed"
-      },
-      {
-        "session": "",
-        "tool": "read",
-        "input": {
-          "path": "$ROOT/brain/rules/020-gates.md"
-        },
-        "status": "error"
-      },
-      {
-        "session": "",
-        "tool": "write",
-        "input": {
-          "path": "$ROOT/mini-projects/good/src/a.js",
-          "content": "x"
-        },
-        "status": "completed"
-      },
-      {
-        "session": "",
-        "tool": "read",
-        "input": {
-          "path": "$ROOT/mini-projects/_template/BRIEF.md"
-        },
-        "status": "completed"
-      },
-      {
-        "session": "mini-projects/bare",
-        "tool": "read",
-        "input": {
-          "path": "NOTES.md"
-        },
-        "status": "completed"
-      }
-    ],
-    "expect_rules": {
-      "030-research.md": 2,
-      "010-voice.md": 1
-    },
-    "not_counted": [
-      "020-gates.md"
-    ],
-    "expect_projects": [
-      "good",
-      "bare"
-    ]
-  },
-  "decay": {
-    "usage": {
-      "since": "2026-01-01T00:00:00.000Z",
-      "rules": {
-        "010-voice.md": {
-          "count": 5,
-          "last": "2026-05-01T00:00:00.000Z"
-        },
-        "030-research.md": {
-          "count": 1,
-          "last": "2026-09-01T00:00:00.000Z"
-        }
-      },
-      "projects": {
-        "p1": "2026-06-01T00:00:00.000Z",
-        "p2": "2026-07-01T00:00:00.000Z",
-        "p3": "2026-08-01T00:00:00.000Z",
-        "p4": "2026-09-15T00:00:00.000Z"
-      }
-    },
-    "decay": [
-      "010-voice.md",
-      "020-gates.md"
-    ],
-    "keep": [
-      "000-core.md",
-      "030-research.md"
-    ]
-  },
   "steps": {
     "projects": [
       "stepa",
@@ -1532,7 +1529,7 @@
       },
       {
         "id": "k2",
-        "note": "step 2 check, exit 1, 60 lines -> attempts 1, last 40 lines kept",
+        "note": "step 2 check, exit 1, 60 lines -> attempts 1, 'exit 1' then the last 40 lines kept",
         "session": "mini-projects/stepa",
         "hook": "after",
         "tool": "shell",
@@ -1557,7 +1554,8 @@
           "last_failure": {
             "step": 1,
             "from": 21,
-            "to": 60
+            "to": 60,
+            "prefix": "exit 1\n"
           }
         }
       },
@@ -1759,12 +1757,12 @@
       },
       {
         "id": "k10",
-        "note": "a command that is not the current check is ignored",
+        "note": "a command that is no step's check is ignored",
         "session": "mini-projects/stepe",
         "hook": "after",
         "tool": "shell",
         "input": {
-          "command": "node -e \"process.exit(1)\""
+          "command": "node -e \"process.exit(2)\""
         },
         "result": {
           "exit": 1,
@@ -1808,7 +1806,7 @@
       },
       {
         "id": "k12",
-        "note": "no exit code (signal kill) counts as a failure",
+        "note": "no exit code (signal kill) counts as a failure; last_failure starts 'exit none'",
         "session": "mini-projects/stepe",
         "hook": "after",
         "tool": "shell",
@@ -1828,7 +1826,11 @@
               false,
               0
             ]
-          ]
+          ],
+          "last_failure": {
+            "step": 0,
+            "contains": "exit none\nkilled"
+          }
         }
       },
       {
@@ -1861,12 +1863,12 @@
       },
       {
         "id": "k15a",
-        "note": "absolute workdir A/../B: A's check run stub is not recorded for A (or B)",
+        "note": "absolute workdir A/../B: a command that is no check of B is not recorded (for A or B)",
         "session": ".",
         "hook": "after",
         "tool": "shell",
         "input": {
-          "command": "node -e \"process.exit(1)\"",
+          "command": "node -e \"process.exit(3)\"",
           "workdir": "$ROOT/mini-projects/stepa/../stepc"
         },
         "result": {
@@ -2182,7 +2184,8 @@
     "mini-projects/gitp",
     "mini-projects/gitmv",
     "mini-projects/gitcd",
-    "mini-projects/gitcfg"
+    "mini-projects/gitcfg",
+    "mini-projects/gittmp"
   ],
   "v4docs": [
     {
@@ -2321,8 +2324,55 @@
         "path": "$ROOT/mini-projects/v3mode/src/app.js",
         "content": "x"
       },
+      "expect": "block",
+      "message_has": "plan gate",
+      "note": "plan gate: a v3 project (state has only plan_sha256, no approved_sha256) is refused a code write"
+    },
+    {
+      "id": "o8",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/README.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "README.md is product code: under the plan gate (no PLAN.md here)",
+      "message_has": "plan gate"
+    },
+    {
+      "id": "o9",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/QA.md",
+        "content": "x"
+      },
       "expect": "allow",
-      "note": "H1 plan gate: a v3-mode project (plan hash only) still passes"
+      "note": "QA.md is a doc file, written before any PLAN.md"
+    },
+    {
+      "id": "o10",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/VISUAL.md",
+        "content": "x"
+      },
+      "expect": "allow",
+      "note": "VISUAL.md is a doc file, written before any PLAN.md"
+    },
+    {
+      "id": "o11",
+      "session": "mini-projects/nodocs",
+      "tool": "write",
+      "input": {
+        "path": "$ROOT/mini-projects/nodocs/visual.md",
+        "content": "x"
+      },
+      "expect": "block",
+      "note": "alias: visual.md is not VISUAL.md",
+      "message_has": "different-case"
     }
   ],
   "breaker": [
@@ -2515,60 +2565,118 @@
   ],
   "parallel": [
     {
-      "id": "p1",
+      "id": "par1",
       "open": [
         [
           "A",
-          "planner"
+          "b1"
+        ],
+        [
+          "A",
+          "b2"
         ]
       ],
       "calls": [
         [
           "A",
-          "critic",
+          "b3",
+          1
+        ]
+      ],
+      "expect": "allow",
+      "note": "a third delegation while two are open runs"
+    },
+    {
+      "id": "par2",
+      "open": [
+        [
+          "A",
+          "b3"
+        ]
+      ],
+      "calls": [
+        [
+          "A",
+          "b4",
           1
         ]
       ],
       "expect": "block",
-      "message_has": "SAFETY GATE: one delegation at a time. Wait for the running @planner to finish, then call the next one.",
-      "note": "R8: a second delegation while A's first is still running"
+      "message_has": "SAFETY GATE: at most 3 delegations at once. Wait for one to finish.",
+      "note": "a fourth while three are open is refused"
     },
     {
-      "id": "p2",
+      "id": "par3",
       "close": [
         [
           "A",
-          "planner",
+          "b1",
           "error"
         ]
       ],
       "calls": [
         [
           "A",
-          "critic",
+          "b4",
           1
         ]
       ],
       "expect": "allow",
-      "note": "R8: after the first call's execute.after (status error) the next one runs"
+      "note": "one execute.after (status error) frees one slot"
     },
     {
-      "id": "p3",
+      "id": "par4",
       "open": [
         [
           "A",
-          "architect"
+          "b1"
+        ]
+      ],
+      "close": [
+        [
+          "A",
+          "b2",
+          "running"
         ]
       ],
       "calls": [
         [
+          "A",
+          "b4",
+          1
+        ]
+      ],
+      "expect": "block",
+      "message_has": "SAFETY GATE: at most 3 delegations at once. Wait for one to finish.",
+      "note": "L124: a result with status running (moved to the background) keeps its slot"
+    },
+    {
+      "id": "par5",
+      "calls": [
+        [
           "B",
-          "planner",
+          "b1",
           1
         ]
       ],
       "expect": "allow",
-      "note": "R8: session B is not held up by A's running delegation"
+      "note": "session B is not held up by A's three open delegations"
+    },
+    {
+      "id": "par6",
+      "calls": [
+        [
+          "D",
+          "builder",
+          1,
+          {
+            "sessionID": "ses_old"
+          }
+        ]
+      ],
+      "expect": "block",
+      "message_has": "SAFETY GATE: start a new delegation; continuing an earlier one is not allowed.",
+      "note": "a delegation that continues an earlier child (input.sessionID) is refused"
     },
     {
       "id": "p4",
@@ -2586,7 +2694,7 @@
         ]
       ],
       "expect": "allow",
-      "note": "R8: A's turn end clears a running flag whose execute.after never came"
+      "note": "A's turn end clears slots whose execute.after never came (the background one stays)"
     },
     {
       "id": "p5",
@@ -2607,7 +2715,7 @@
         ]
       ],
       "expect": "block",
-      "message_has": "SAFETY GATE: one delegation at a time. Background delegations are not allowed; call it in the foreground.",
+      "message_has": "SAFETY GATE: background delegation. Background delegations are not allowed; call it in the foreground.",
       "note": "a background delegation is refused (it would return at once and run beside the next one)"
     },
     {
@@ -2787,6 +2895,4071 @@
       ],
       "lock": "absent",
       "note": "the event loop subscribes again when the first subscribe() throws"
+    },
+    {
+      "id": "l9",
+      "write_locks": true,
+      "open": [
+        [
+          "R",
+          "builder"
+        ]
+      ],
+      "close": [
+        [
+          "R",
+          "builder",
+          "running"
+        ]
+      ],
+      "events": [
+        [
+          "session.execution.succeeded",
+          "R"
+        ]
+      ],
+      "lock": "present",
+      "note": "L124: a delegation moved to the background keeps the lock at the root's turn end"
+    },
+    {
+      "id": "l10",
+      "events": [
+        [
+          "session.execution.succeeded",
+          "R-child"
+        ],
+        [
+          "session.execution.started",
+          "R"
+        ],
+        [
+          "session.execution.succeeded",
+          "R"
+        ]
+      ],
+      "lock": "absent",
+      "note": "the backgrounded child ends, then the root's completion turn ends: the lock is freed"
     }
-  ]
+  ],
+  "scope": {
+    "project": "scopep",
+    "steps": [
+      [
+        "spike",
+        "spike.js",
+        "true p1"
+      ],
+      [
+        "quiz",
+        "src/",
+        "true p2"
+      ],
+      [
+        "lib",
+        "lib/b.js",
+        "true p3"
+      ]
+    ],
+    "created": [
+      [
+        "b2",
+        "sroot",
+        "scopep: step 2",
+        "builder"
+      ],
+      [
+        "b3",
+        "sroot",
+        "scopep: step 3",
+        "builder"
+      ],
+      [
+        "b3l",
+        "sroot",
+        "scopep: step 3 – lib",
+        "builder"
+      ],
+      [
+        "b3x",
+        "sroot",
+        "scopep: step 3x",
+        "builder"
+      ],
+      [
+        "bf",
+        "sroot",
+        "scopep: fix",
+        "builder"
+      ]
+    ],
+    "ops": [
+      {
+        "id": "sc1",
+        "note": "builder of step 2 writes a file in its step's folder",
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/src/a.js",
+              "content": "x"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc2",
+        "note": "builder of step 2 writes step 3's file: refused, naming its files",
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/lib/b.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: step scope. Step 2 may write only: src/. Write requests/step2.md if you need more."
+          }
+        ]
+      },
+      {
+        "id": "sc3",
+        "note": "builder of step 2 may write requests/step2.md, not requests/step3.md",
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/requests/step2.md",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/requests/step3.md",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "step scope"
+          }
+        ]
+      },
+      {
+        "id": "sc4",
+        "note": "a shell redirect onto another step's file is refused",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "command": "echo x > lib/b.js",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: step scope. Step 2 may write only: src/. Write requests/step2.md if you need more."
+          }
+        ]
+      },
+      {
+        "id": "sc5",
+        "note": "Review Focus 4: Src/Quiz.js is inside scope src/ (case-blind)",
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/Src/Quiz.js",
+              "content": "x"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc6",
+        "note": "Review Focus 3: an untied builder child may write only the batch's step files (+ their requests), never the testfix/research paths of the same batch",
+        "snapshot": {
+          "steps": [
+            3
+          ],
+          "kind": "build",
+          "stage": "BUILD",
+          "allowed": [
+            "lib/b.js",
+            "requests/step3.md",
+            "tests/acceptance/",
+            "QA.md",
+            "RESEARCH/"
+          ]
+        },
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bx",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/lib/b.js",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bx",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/requests/step3.md",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bx",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/src/a.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "not tied to a step"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bx",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/QA.md",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "not tied to a step"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bx",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/tests/acceptance/a.spec.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "not tied to a step"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bx",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/RESEARCH/step3.md",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "not tied to a step"
+          }
+        ]
+      },
+      {
+        "id": "sc7",
+        "note": "Review Focus 3: an untied builder child with no batch snapshot may write nothing",
+        "snapshot": null,
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bx",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/lib/b.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "no batch snapshot"
+          }
+        ]
+      },
+      {
+        "id": "sc12",
+        "note": "a title that starts with a valid description ties ('step 3 – lib'); 'step 3x' does not",
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b3l",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/lib/b.js",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b3l",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/src/a.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "Step 3 may write only: lib/b.js"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b3x",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/lib/b.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "not tied to a step"
+          }
+        ]
+      },
+      {
+        "id": "sc13",
+        "note": "a builder tied to a step outside the batch is treated as untied (the batch's step files)",
+        "snapshot": {
+          "steps": [
+            3
+          ],
+          "kind": "build",
+          "stage": "BUILD",
+          "allowed": [
+            "lib/b.js",
+            "requests/step3.md",
+            "tests/acceptance/",
+            "QA.md",
+            "RESEARCH/"
+          ]
+        },
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/src/a.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "not tied to a step"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b3",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/lib/b.js",
+              "content": "x"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc14",
+        "note": "a 'fix' title outside a FIX turn gets no fix scope (the batch's step files only)",
+        "snapshot": {
+          "steps": [
+            3
+          ],
+          "kind": "build",
+          "stage": "BUILD",
+          "allowed": [
+            "lib/b.js",
+            "requests/step3.md",
+            "tests/acceptance/",
+            "QA.md",
+            "RESEARCH/"
+          ]
+        },
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bf",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/src/a.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "not tied to a step"
+          }
+        ]
+      },
+      {
+        "id": "sc15",
+        "note": "in a FIX turn a 'fix' child may write every step file of the milestone",
+        "snapshot": {
+          "steps": [],
+          "kind": "stage",
+          "stage": "FIX",
+          "allowed": [
+            "spike.js",
+            "src/",
+            "lib/b.js"
+          ]
+        },
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bf",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/src/a.js",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bf",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/lib/b.js",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bf",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/QA.md",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "fix round"
+          }
+        ]
+      },
+      {
+        "id": "sc16",
+        "note": "the snapshot is gone again: the tied step rules apply as before",
+        "snapshot": null,
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/src/a.js",
+              "content": "x"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc8",
+        "note": "a child the event missed is tied through ctx.session.get (its title)",
+        "instance": "get",
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bg3",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/lib/b.js",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "bg3",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/src/a.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "Step 3 may write only: lib/b.js"
+          }
+        ]
+      },
+      {
+        "id": "sc9",
+        "note": "qa may write tests/acceptance/ and QA.md only",
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "qa",
+            "sid": "qa1",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/tests/acceptance/a.spec.js",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "qa",
+            "sid": "qa1",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/QA.md",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "qa",
+            "sid": "qa1",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/src/a.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "step scope"
+          }
+        ]
+      },
+      {
+        "id": "sc10",
+        "note": "designer after approval: VISUAL.md and design/shots/ only",
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/VISUAL.md",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/design/shots/home.png",
+              "content": "x"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "write",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/DESIGN.md",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "step scope"
+          },
+          {
+            "tool": "write",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "path": "$ROOT/mini-projects/scopep/design/mockups/a.html",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "step scope"
+          }
+        ]
+      },
+      {
+        "id": "sc11",
+        "note": "a builder tied to scopep cannot write another approved project",
+        "calls": [
+          {
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "path": "$ROOT/mini-projects/good/src/app.js",
+              "content": "x"
+            },
+            "expect": "block",
+            "message_has": "step scope"
+          }
+        ]
+      },
+      {
+        "id": "sc17",
+        "note": "T15 live: a heredoc body is data, not redirects; code with >=, > or mkdir in it may be written to the step's own file",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "command": "cat >> src/a.js <<'EOF'\nif (a >= 1 && b > c) { mkdir(x); tee(y) }\nconst z = a >> 2\nEOF",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc18",
+        "note": "the heredoc's own first line is still checked: cat > another step's file is refused",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "command": "cat > lib/b.js <<'EOF'\nx\nEOF",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: step scope"
+          }
+        ]
+      },
+      {
+        "id": "sc19",
+        "note": "T15 live (step 8): mkdir of the folder that holds the step's file, then an HTML heredoc into it",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b3",
+            "input": {
+              "command": "mkdir -p lib\ncat > lib/b.js <<'EOF'\n<a href=\"x\">y</a>\n<p>z</p>\nEOF",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "allow"
+          }
+        ]
+      }
+    ]
+  },
+  "record": {
+    "projects": {
+      "ckp": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true c1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 2,
+              "title": "s2",
+              "milestone": "M1",
+              "files": [
+                "f2.js"
+              ],
+              "check": "true c2",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 3,
+              "title": "s3",
+              "milestone": "M1",
+              "files": [
+                "f3.js"
+              ],
+              "check": "true c3",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        }
+      },
+      "ckv": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true y1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 2,
+              "title": "s2",
+              "milestone": "M1",
+              "files": [
+                "f2.js"
+              ],
+              "check": "true y2",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            }
+          ],
+          "qa": {
+            "run": "true acc",
+            "milestone": "M1"
+          }
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true acc`\n## VERDICT\n## REVISIONS\n",
+          "src/a.js": "x\n"
+        }
+      },
+      "ckt": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true t1",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true acc`\n## VERDICT\n## REVISIONS\n",
+          "tests/acceptance/a.spec.js": "x\n"
+        }
+      },
+      "ckt2": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true t1",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true acc`\n## VERDICT\n## REVISIONS\n",
+          "tests/acceptance/a.spec.js": "x\n"
+        }
+      },
+      "ckt3": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true t1",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true acc`\n## VERDICT\n## REVISIONS\n",
+          "tests/acceptance/a.spec.js": "x\n"
+        }
+      },
+      "ckw": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true w1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 2,
+              "title": "s2",
+              "milestone": "M1",
+              "files": [
+                "f2.js"
+              ],
+              "check": "true w2",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            }
+          ],
+          "qa": {
+            "run": "true acc",
+            "milestone": "M1"
+          }
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true acc`\n## VERDICT\n## REVISIONS\n",
+          "src/a.js": "x\n"
+        }
+      },
+      "qwp": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true q1",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 2,
+              "title": "s2",
+              "milestone": "M1",
+              "files": [
+                "f2.js"
+              ],
+              "check": "true q2",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 3,
+              "title": "s3",
+              "milestone": "M1",
+              "files": [
+                "f3.js"
+              ],
+              "check": "true q3",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 4,
+              "title": "s4",
+              "milestone": "M1",
+              "files": [
+                "f4.js"
+              ],
+              "check": "true q4",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 5,
+              "title": "s5",
+              "milestone": "M1",
+              "files": [
+                "f5.js"
+              ],
+              "check": "true q5",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 6,
+              "title": "s6",
+              "milestone": "M1",
+              "files": [
+                "f6.js"
+              ],
+              "check": "true q6",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 7,
+              "title": "s7",
+              "milestone": "M1",
+              "files": [
+                "f7.js"
+              ],
+              "check": "true q7",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 8,
+              "title": "s8",
+              "milestone": "M1",
+              "files": [
+                "f8.js"
+              ],
+              "check": "true q8",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 9,
+              "title": "s9",
+              "milestone": "M1",
+              "files": [
+                "f9.js"
+              ],
+              "check": "true q9",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 10,
+              "title": "s10",
+              "milestone": "M1",
+              "files": [
+                "f10.js"
+              ],
+              "check": "true q10",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 11,
+              "title": "s11",
+              "milestone": "M1",
+              "files": [
+                "f11.js"
+              ],
+              "check": "true q11",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 12,
+              "title": "s12",
+              "milestone": "M1",
+              "files": [
+                "f12.js"
+              ],
+              "check": "true q12",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 13,
+              "title": "s13",
+              "milestone": "M1",
+              "files": [
+                "f13.js"
+              ],
+              "check": "true q13",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 14,
+              "title": "s14",
+              "milestone": "M1",
+              "files": [
+                "f14.js"
+              ],
+              "check": "true q14",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 15,
+              "title": "s15",
+              "milestone": "M1",
+              "files": [
+                "f15.js"
+              ],
+              "check": "true q15",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 16,
+              "title": "s16",
+              "milestone": "M1",
+              "files": [
+                "f16.js"
+              ],
+              "check": "true q16",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 17,
+              "title": "s17",
+              "milestone": "M1",
+              "files": [
+                "f17.js"
+              ],
+              "check": "true q17",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 18,
+              "title": "s18",
+              "milestone": "M1",
+              "files": [
+                "f18.js"
+              ],
+              "check": "true q18",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 19,
+              "title": "s19",
+              "milestone": "M1",
+              "files": [
+                "f19.js"
+              ],
+              "check": "true q19",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 20,
+              "title": "s20",
+              "milestone": "M1",
+              "files": [
+                "f20.js"
+              ],
+              "check": "true q20",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        }
+      },
+      "vrp": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true r1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          "src/a.js": "x\n"
+        }
+      },
+      "vrv": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true r1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          "src/a.js": "x\n"
+        }
+      },
+      "vrs": {
+        "state": {
+          "fix_rounds": 2,
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "src/core.js"
+              ],
+              "check": "true s1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 2,
+              "title": "s2",
+              "milestone": "M1",
+              "files": [
+                "src/other.js"
+              ],
+              "check": "true s2",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 3,
+              "title": "s3",
+              "milestone": "M1",
+              "files": [
+                "src/core.js"
+              ],
+              "check": "true s3",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          "BRIEF.md": "# BRIEF - fixture\n## SUMMARY\nA fixture.\n## WHERE IT RUNS\n- ui: no\n## FEATURES\n- F1 [MUST] it runs\n## OPEN QUESTIONS\n- none\n",
+          "ARCHITECTURE.md": "# ARCHITECTURE - fixture\n## SUMMARY\nA fixture.\n## STRUCTURE\n```\nsrc/core.js\nsrc/other.js\n```\n## RISKS\n- R1: it may not run - test: run it once\n## DECISIONS\n- D1: plain files - rejected: a database - why: nothing to store\n## MILESTONES\n- M1: it runs - covers: F1\n## CRITIQUE ANSWERS\n- C1: fixed - see D1\n",
+          "REVIEW.md": "## VERDICT: SHIP\n## Blind spots\n- none\n",
+          "src/core.js": "x\n"
+        }
+      },
+      "vrq": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true r1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            }
+          ],
+          "qa": {
+            "verdict": "PASS",
+            "verdict_tree_sha256": "old",
+            "run": "true acc",
+            "milestone": "M1"
+          },
+          "verify": {
+            "tree_sha256": "old",
+            "checks": {
+              "1": 0
+            },
+            "acceptance": 0,
+            "milestone": "M1"
+          }
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true acc`\n## VERDICT\n## REVISIONS\n",
+          "src/a.js": "x\n"
+        }
+      },
+      "lkp": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true l1",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          ".harness/lock": "{\"stage\": \"BUILD\", \"at\": \"2000-01-01T00:00:00Z\"}"
+        }
+      },
+      "lkq": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true l1",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          ".harness/lock": "{\"stage\": \"BUILD\", \"at\": \"2000-01-01T00:00:00Z\"}"
+        }
+      },
+      "ckb": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true b1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 2,
+              "title": "s2",
+              "milestone": "M1",
+              "files": [
+                "f2.js"
+              ],
+              "check": "true b2",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            },
+            {
+              "n": 3,
+              "title": "s3",
+              "milestone": "M1",
+              "files": [
+                "f3.js"
+              ],
+              "check": "true b3",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          ".harness/snapshot.json": "{\"files\": {}, \"allowed\": [\"f2.js\", \"requests/step2.md\"], \"steps\": [2], \"kind\": \"build\", \"stage\": \"BUILD\", \"at\": \"t\"}"
+        }
+      },
+      "cka": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true a1",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          ".harness/snapshot.json": "{\"files\": {}, \"allowed\": [\"f1.js\", \"requests/step1.md\"], \"steps\": [1], \"kind\": \"build\", \"stage\": \"BUILD\", \"attempts\": {\"1\": 0}, \"at\": \"t\"}"
+        }
+      },
+      "ckr1": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true r1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            }
+          ],
+          "qa": {
+            "run": "true acc",
+            "failed_first_at": "t",
+            "milestone": "M1"
+          }
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true`\n## VERDICT\n## REVISIONS\n",
+          "src/a.js": "x\n"
+        }
+      },
+      "ckr2": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true r1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            }
+          ],
+          "qa": {
+            "run": "true acc",
+            "failed_first_at": "t",
+            "milestone": "M1"
+          }
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true`\n## VERDICT\n## REVISIONS\n",
+          "src/a.js": "x\n"
+        }
+      },
+      "vrb": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M1",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true r1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            }
+          ]
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true acc`\n## VERDICT\nVERDICT: PASS\n## REVISIONS\n",
+          "VISUAL.md": "VERDICT: MATCH\n",
+          "src/a.js": "x\n"
+        }
+      },
+      "msq": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M2",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true m1",
+              "done_at": null,
+              "attempts": 0,
+              "last_failure": null
+            }
+          ],
+          "qa": {
+            "failed_first_at": "old",
+            "tests_sha256": "old",
+            "run": "true acc",
+            "verdict": "PASS",
+            "verdict_tree_sha256": "old",
+            "milestone": "M1"
+          }
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true acc`\n## VERDICT\n## REVISIONS\n",
+          "tests/acceptance/a.spec.js": "x\n"
+        }
+      },
+      "msv": {
+        "state": {
+          "steps": [
+            {
+              "n": 1,
+              "title": "s1",
+              "milestone": "M2",
+              "files": [
+                "f1.js"
+              ],
+              "check": "true v1",
+              "done_at": "2026-10-31T00:00:00Z",
+              "attempts": 0,
+              "last_failure": null
+            }
+          ],
+          "qa": {
+            "failed_first_at": "t",
+            "tests_sha256": "t",
+            "run": "true acc",
+            "milestone": "M2"
+          },
+          "verify": {
+            "tree_sha256": "$TREE",
+            "milestone": "M1",
+            "checks": {
+              "1": 0,
+              "9": 0
+            },
+            "acceptance": 0
+          }
+        },
+        "files": {
+          "QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true acc`\n## VERDICT\n## REVISIONS\n",
+          "src/a.js": "x\n"
+        }
+      }
+    },
+    "ops": [
+      {
+        "id": "ck1",
+        "note": "parallel checks of steps 2 and 3 land on the right steps; a child tied to step 2 that runs step 3's check records nothing",
+        "created": [
+          [
+            "c2",
+            "root1",
+            "ckp: step 2",
+            "builder"
+          ],
+          [
+            "c3",
+            "root1",
+            "ckp: step 3",
+            "builder"
+          ]
+        ],
+        "together": true,
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "c2",
+            "input": {
+              "command": "true c2",
+              "workdir": "mini-projects/ckp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "c3",
+            "input": {
+              "command": "true c3",
+              "workdir": "mini-projects/ckp"
+            },
+            "result": {
+              "exit": 1,
+              "output": "boom\n"
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "c2",
+            "input": {
+              "command": "true c3",
+              "workdir": "mini-projects/ckp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "ckp",
+            "path": "steps.1.done_at",
+            "set": true
+          },
+          {
+            "project": "ckp",
+            "path": "steps.1.attempts",
+            "eq": 0
+          },
+          {
+            "project": "ckp",
+            "path": "steps.2.done_at",
+            "set": false
+          },
+          {
+            "project": "ckp",
+            "path": "steps.2.attempts",
+            "eq": 1
+          }
+        ]
+      },
+      {
+        "id": "ck2",
+        "note": "last_failure starts 'exit <n>' then the output",
+        "calls": [],
+        "expect": [
+          {
+            "project": "ckp",
+            "path": "steps.2.last_failure",
+            "starts": "exit 1\nboom"
+          }
+        ]
+      },
+      {
+        "id": "ck3",
+        "note": "VERIFY (all steps done): every step check and the acceptance run go to verify with the tree",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q1",
+            "input": {
+              "command": "true y1",
+              "workdir": "mini-projects/ckv"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q1",
+            "input": {
+              "command": "true y2",
+              "workdir": "mini-projects/ckv"
+            },
+            "result": {
+              "exit": 3,
+              "output": "bad\n"
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q1",
+            "input": {
+              "command": "true acc",
+              "workdir": "mini-projects/ckv"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "ckv",
+            "path": "verify.checks.1",
+            "eq": 0
+          },
+          {
+            "project": "ckv",
+            "path": "verify.checks.2",
+            "eq": 3
+          },
+          {
+            "project": "ckv",
+            "path": "verify.acceptance",
+            "eq": 0
+          },
+          {
+            "project": "ckv",
+            "path": "verify.tree_sha256",
+            "eq": "$TREE"
+          },
+          {
+            "project": "ckv",
+            "path": "steps.1.attempts",
+            "eq": 0
+          },
+          {
+            "project": "ckv",
+            "path": "verify.milestone",
+            "eq": "M1"
+          }
+        ]
+      },
+      {
+        "id": "ck3b",
+        "note": "VERIFY: a run that never executed (the reviewer's check refused by its permissions, status error) records nothing; seen live in the T13 mechanics run, it turned a passed verify into FIX",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "reviewer",
+            "sid": "r1",
+            "status": "error",
+            "error": "Permission denied: shell",
+            "input": {
+              "command": "true y1",
+              "workdir": "mini-projects/ckv"
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "reviewer",
+            "sid": "r1",
+            "status": "error",
+            "error": "Permission denied: shell",
+            "input": {
+              "command": "true acc",
+              "workdir": "mini-projects/ckv"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "ckv",
+            "path": "verify.checks.1",
+            "eq": 0
+          },
+          {
+            "project": "ckv",
+            "path": "verify.acceptance",
+            "eq": 0
+          }
+        ]
+      },
+      {
+        "id": "ck4",
+        "note": "TESTS: qa's failing acceptance run sets failed_first_at and the tests hash; a passing run and a builder's failing run set nothing; the command run is pinned in qa.run",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q2",
+            "input": {
+              "command": "true acc",
+              "workdir": "mini-projects/ckt"
+            },
+            "result": {
+              "exit": 1,
+              "output": "1 failed\n"
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q3",
+            "input": {
+              "command": "true acc",
+              "workdir": "mini-projects/ckt2"
+            },
+            "result": {
+              "exit": 0,
+              "output": "1 passed\n"
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b9",
+            "input": {
+              "command": "true acc",
+              "workdir": "mini-projects/ckt3"
+            },
+            "result": {
+              "exit": 1,
+              "output": "1 failed\n"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "ckt",
+            "path": "qa.failed_first_at",
+            "set": true
+          },
+          {
+            "project": "ckt",
+            "path": "qa.tests_sha256",
+            "eq": "$TESTS"
+          },
+          {
+            "project": "ckt2",
+            "path": "qa.failed_first_at",
+            "set": false
+          },
+          {
+            "project": "ckt2",
+            "path": "qa.tests_sha256",
+            "set": false
+          },
+          {
+            "project": "ckt3",
+            "path": "qa.failed_first_at",
+            "set": false
+          },
+          {
+            "project": "ckt",
+            "path": "qa.run",
+            "eq": "true acc"
+          },
+          {
+            "project": "ckt",
+            "path": "qa.milestone",
+            "eq": "M1"
+          }
+        ]
+      },
+      {
+        "id": "ck5",
+        "note": "Review Focus 5: a check with extra spaces counts; in another (absolute) workdir or with a trailing ';' it does not",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q4",
+            "input": {
+              "command": "  true   w1  ",
+              "workdir": "mini-projects/ckw"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q4",
+            "input": {
+              "command": "true w2",
+              "workdir": "$ROOT/mini-projects/ckw/src"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q4",
+            "input": {
+              "command": "true w2;",
+              "workdir": "mini-projects/ckw"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "ckw",
+            "path": "verify.checks.1",
+            "eq": 0
+          },
+          {
+            "project": "ckw",
+            "path": "verify.checks.2",
+            "set": false
+          }
+        ]
+      },
+      {
+        "id": "qw1",
+        "note": "20 recordings fired together in one project: all 20 land",
+        "together": true,
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w1",
+            "input": {
+              "command": "true q1",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w2",
+            "input": {
+              "command": "true q2",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w3",
+            "input": {
+              "command": "true q3",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w4",
+            "input": {
+              "command": "true q4",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w5",
+            "input": {
+              "command": "true q5",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w6",
+            "input": {
+              "command": "true q6",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w7",
+            "input": {
+              "command": "true q7",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w8",
+            "input": {
+              "command": "true q8",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w9",
+            "input": {
+              "command": "true q9",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w10",
+            "input": {
+              "command": "true q10",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w11",
+            "input": {
+              "command": "true q11",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w12",
+            "input": {
+              "command": "true q12",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w13",
+            "input": {
+              "command": "true q13",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w14",
+            "input": {
+              "command": "true q14",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w15",
+            "input": {
+              "command": "true q15",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w16",
+            "input": {
+              "command": "true q16",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w17",
+            "input": {
+              "command": "true q17",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w18",
+            "input": {
+              "command": "true q18",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w19",
+            "input": {
+              "command": "true q19",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "w20",
+            "input": {
+              "command": "true q20",
+              "workdir": "mini-projects/qwp"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "qwp",
+            "path": "steps",
+            "all": "done_at",
+            "len": 20
+          }
+        ]
+      },
+      {
+        "id": "vr1",
+        "note": "QA.md written with a verdict: qa.verdict and its tree hash are recorded",
+        "files": {
+          "mini-projects/vrp/QA.md": "# QA - x\n## SUMMARY\nx\n## TESTS\n- F1: tests/acceptance/a.spec.js - it runs\n## RUN\n- run: `true acc`\n## VERDICT\nVERDICT: PASS\n## REVISIONS\n"
+        },
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "write",
+            "agent": "qa",
+            "sid": "q5",
+            "input": {
+              "path": "$ROOT/mini-projects/vrp/QA.md"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "vrp",
+            "path": "qa.verdict",
+            "eq": "PASS"
+          },
+          {
+            "project": "vrp",
+            "path": "qa.verdict_tree_sha256",
+            "eq": "$TREE"
+          },
+          {
+            "project": "vrp",
+            "path": "qa.milestone",
+            "eq": "M1"
+          }
+        ]
+      },
+      {
+        "id": "vr2",
+        "note": "VISUAL.md written with a verdict: visual = {verdict, tree_sha256}",
+        "files": {
+          "mini-projects/vrv/VISUAL.md": "VERDICT: MATCH\n- home: design/shots/home.png - same - none\n"
+        },
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "write",
+            "agent": "designer",
+            "sid": "d2",
+            "input": {
+              "path": "$ROOT/mini-projects/vrv/VISUAL.md"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "vrv",
+            "path": "visual.verdict",
+            "eq": "MATCH"
+          },
+          {
+            "project": "vrv",
+            "path": "visual.tree_sha256",
+            "eq": "$TREE"
+          },
+          {
+            "project": "vrv",
+            "path": "visual.milestone",
+            "eq": "M1"
+          }
+        ]
+      },
+      {
+        "id": "vr3",
+        "note": "a SHIP review resets fix_rounds",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "write",
+            "agent": "reviewer",
+            "sid": "r1",
+            "input": {
+              "path": "$ROOT/mini-projects/vrs/REVIEW.md"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "vrs",
+            "path": "review.verdict",
+            "eq": "SHIP"
+          },
+          {
+            "project": "vrs",
+            "path": "fix_rounds",
+            "eq": 0
+          }
+        ]
+      },
+      {
+        "id": "vr4",
+        "note": "a VERIFY recording on a new tree starts verify afresh and drops a QA verdict of an older tree",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q6",
+            "input": {
+              "command": "true r1",
+              "workdir": "mini-projects/vrq"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "vrq",
+            "path": "verify.tree_sha256",
+            "eq": "$TREE"
+          },
+          {
+            "project": "vrq",
+            "path": "verify.checks.1",
+            "eq": 0
+          },
+          {
+            "project": "vrq",
+            "path": "verify.acceptance",
+            "set": false
+          },
+          {
+            "project": "vrq",
+            "path": "qa.verdict",
+            "set": false
+          }
+        ]
+      },
+      {
+        "id": "lk1",
+        "note": "a tool call of a child tied to lkp rewrites lkp's lock 'at' (nothing else); lkq's stays",
+        "created": [
+          [
+            "lc1",
+            "lroot",
+            "lkp: step 1",
+            "builder"
+          ]
+        ],
+        "calls": [
+          {
+            "hook": "before",
+            "tool": "read",
+            "agent": "builder",
+            "sid": "lc1",
+            "input": {
+              "filePath": "$ROOT/mini-projects/lkp/f1.js"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "lkp",
+            "path": "at",
+            "file": ".harness/lock",
+            "ne": "2000-01-01T00:00:00Z"
+          },
+          {
+            "project": "lkp",
+            "path": "stage",
+            "file": ".harness/lock",
+            "eq": "BUILD"
+          },
+          {
+            "project": "lkq",
+            "path": "at",
+            "file": ".harness/lock",
+            "eq": "2000-01-01T00:00:00Z"
+          }
+        ]
+      },
+      {
+        "id": "ck6",
+        "note": "BUILD: a check of a step outside the current batch is not credited",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "u6",
+            "input": {
+              "command": "true b3",
+              "workdir": "mini-projects/ckb"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "u6",
+            "input": {
+              "command": "true b2",
+              "workdir": "mini-projects/ckb"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "ckb",
+            "path": "steps.2.done_at",
+            "set": false
+          },
+          {
+            "project": "ckb",
+            "path": "steps.1.done_at",
+            "set": true
+          }
+        ]
+      },
+      {
+        "id": "ck7",
+        "note": "VERIFY: only the command pinned at the failing TESTS run records verify.acceptance, even after QA.md's '- run:' changed",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q7",
+            "input": {
+              "command": "true",
+              "workdir": "mini-projects/ckr1"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q7",
+            "input": {
+              "command": "true acc",
+              "workdir": "mini-projects/ckr2"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "ckr1",
+            "path": "verify.acceptance",
+            "set": false
+          },
+          {
+            "project": "ckr2",
+            "path": "verify.acceptance",
+            "eq": 0
+          }
+        ]
+      },
+      {
+        "id": "ck8",
+        "note": "final review I1: two failing check runs in one builder turn cost one attempt (the snapshot's attempts are the turn's baseline); the last failure is kept",
+        "created": [
+          [
+            "a1",
+            "aroot",
+            "cka: step 1",
+            "builder"
+          ]
+        ],
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "a1",
+            "input": {
+              "command": "true a1",
+              "workdir": "mini-projects/cka"
+            },
+            "result": {
+              "exit": 1,
+              "output": "first\n"
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "a1",
+            "input": {
+              "command": "true a1",
+              "workdir": "mini-projects/cka"
+            },
+            "result": {
+              "exit": 2,
+              "output": "second\n"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "cka",
+            "path": "steps.0.attempts",
+            "eq": 1
+          },
+          {
+            "project": "cka",
+            "path": "steps.0.last_failure",
+            "starts": "exit 2\nsecond"
+          }
+        ]
+      },
+      {
+        "id": "vr5",
+        "note": "a QA.md verdict counts only from qa, a VISUAL.md verdict only from the designer",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "write",
+            "agent": "builder",
+            "sid": "b5",
+            "input": {
+              "path": "$ROOT/mini-projects/vrb/QA.md"
+            }
+          },
+          {
+            "hook": "after",
+            "tool": "write",
+            "agent": "qa",
+            "sid": "q8",
+            "input": {
+              "path": "$ROOT/mini-projects/vrb/VISUAL.md"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "vrb",
+            "path": "qa.verdict",
+            "set": false
+          },
+          {
+            "project": "vrb",
+            "path": "visual",
+            "set": false
+          }
+        ]
+      },
+      {
+        "id": "ms1",
+        "note": "T7-R8: M2's failing acceptance run starts a fresh qa record for M2; M1's verdict and pins do not carry over",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q9",
+            "input": {
+              "command": "true acc",
+              "workdir": "mini-projects/msq"
+            },
+            "result": {
+              "exit": 1,
+              "output": "1 failed\n"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "msq",
+            "path": "qa.milestone",
+            "eq": "M2"
+          },
+          {
+            "project": "msq",
+            "path": "qa.verdict",
+            "set": false
+          },
+          {
+            "project": "msq",
+            "path": "qa.failed_first_at",
+            "ne": "old"
+          },
+          {
+            "project": "msq",
+            "path": "qa.tests_sha256",
+            "eq": "$TESTS"
+          }
+        ]
+      },
+      {
+        "id": "ms2",
+        "note": "T7-R8: a VERIFY run in M2 does not add to M1's verify of the same tree; it starts verify afresh for M2",
+        "calls": [
+          {
+            "hook": "after",
+            "tool": "shell",
+            "agent": "qa",
+            "sid": "q9",
+            "input": {
+              "command": "true v1",
+              "workdir": "mini-projects/msv"
+            },
+            "result": {
+              "exit": 0,
+              "output": ""
+            }
+          }
+        ],
+        "expect": [
+          {
+            "project": "msv",
+            "path": "verify.milestone",
+            "eq": "M2"
+          },
+          {
+            "project": "msv",
+            "path": "verify.checks.1",
+            "eq": 0
+          },
+          {
+            "project": "msv",
+            "path": "verify.checks.9",
+            "set": false
+          },
+          {
+            "project": "msv",
+            "path": "verify.acceptance",
+            "set": false
+          }
+        ]
+      }
+    ]
+  },
+  "loop": {
+    "projects": [
+      "coa",
+      "cob",
+      "coc",
+      "cod",
+      "apa",
+      "apb",
+      "retry",
+      "coe"
+    ],
+    "ops": [
+      {
+        "id": "co1",
+        "set": {
+          "coa": {
+            "cost": {
+              "milestone": "M1",
+              "usd": 1,
+              "project_usd": 1
+            }
+          }
+        },
+        "seq": [
+          [
+            "created",
+            "R1",
+            null,
+            ""
+          ],
+          [
+            "start",
+            "R1"
+          ],
+          [
+            "usage",
+            "R1",
+            0.125
+          ],
+          [
+            "delegate",
+            "R1",
+            "coa: step 1"
+          ],
+          [
+            "created",
+            "C1",
+            "R1",
+            "coa: step 1"
+          ],
+          [
+            "usage",
+            "C1",
+            0.25
+          ],
+          [
+            "usage",
+            "C1",
+            0.5
+          ],
+          [
+            "usage",
+            "R1",
+            0.375
+          ],
+          [
+            "end",
+            "R1",
+            "succeeded"
+          ]
+        ],
+        "state": [
+          {
+            "project": "coa",
+            "path": "cost.usd",
+            "eq": 1.875
+          },
+          {
+            "project": "coa",
+            "path": "cost.project_usd",
+            "eq": 1.875
+          },
+          {
+            "project": "coa",
+            "path": "cost.milestone",
+            "eq": "M1"
+          }
+        ],
+        "sent": [],
+        "note": "the running totals of the root (also before its first delegation) and its child reach the project the delegation names"
+      },
+      {
+        "id": "co2",
+        "set": {
+          "cob": {
+            "cost": {
+              "milestone": "M1",
+              "usd": 1,
+              "project_usd": 1
+            }
+          }
+        },
+        "seq": [
+          [
+            "created",
+            "R2",
+            null,
+            ""
+          ],
+          [
+            "start",
+            "R2"
+          ],
+          [
+            "usage",
+            "R2",
+            0.5
+          ],
+          [
+            "end",
+            "R2",
+            "succeeded"
+          ],
+          [
+            "start",
+            "R2"
+          ],
+          [
+            "delegate",
+            "R2",
+            "cob: step 1"
+          ],
+          [
+            "end",
+            "R2",
+            "succeeded"
+          ]
+        ],
+        "state": [
+          {
+            "project": "cob",
+            "path": "cost.usd",
+            "eq": 1
+          },
+          {
+            "project": "cob",
+            "path": "cost.project_usd",
+            "eq": 1
+          }
+        ],
+        "sent": [],
+        "note": "a turn without a delegation adds nothing, also not to the next turn that delegates"
+      },
+      {
+        "id": "co3",
+        "set": {
+          "coc": {
+            "cost": {
+              "milestone": "M0",
+              "usd": 2,
+              "project_usd": 5
+            }
+          }
+        },
+        "seq": [
+          [
+            "created",
+            "R3",
+            null,
+            ""
+          ],
+          [
+            "start",
+            "R3"
+          ],
+          [
+            "delegate",
+            "R3",
+            "coc: step 1"
+          ],
+          [
+            "created",
+            "C3",
+            "R3",
+            "coc: step 1"
+          ],
+          [
+            "usage",
+            "C3",
+            0.25
+          ],
+          [
+            "end",
+            "R3",
+            "succeeded"
+          ]
+        ],
+        "state": [
+          {
+            "project": "coc",
+            "path": "cost.milestone",
+            "eq": "M1"
+          },
+          {
+            "project": "coc",
+            "path": "cost.usd",
+            "eq": 0.25
+          },
+          {
+            "project": "coc",
+            "path": "cost.project_usd",
+            "eq": 5.25
+          }
+        ],
+        "sent": [],
+        "note": "a new milestone resets cost.usd; the project total keeps growing"
+      },
+      {
+        "id": "co4",
+        "instance": "fresh",
+        "set": {
+          "cod": {
+            "cost": {
+              "milestone": "M1",
+              "usd": 0,
+              "project_usd": 0
+            }
+          }
+        },
+        "seq": [
+          [
+            "start",
+            "R4"
+          ],
+          [
+            "delegate",
+            "R4",
+            "cod: step 1"
+          ],
+          [
+            "usage",
+            "R4",
+            3
+          ],
+          [
+            "usage",
+            "R4",
+            3.25
+          ],
+          [
+            "end",
+            "R4",
+            "succeeded"
+          ]
+        ],
+        "state": [
+          {
+            "project": "cod",
+            "path": "cost.usd",
+            "eq": 0.25
+          }
+        ],
+        "sent": [],
+        "note": "restart: a session first seen after it was created only sets its baseline (its earlier total is never added again)"
+      },
+      {
+        "id": "ap1",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A1"
+          ],
+          [
+            "delegate",
+            "A1",
+            "apa: step 1"
+          ],
+          [
+            "end",
+            "A1",
+            "succeeded"
+          ]
+        ],
+        "sent": [
+          [
+            "A1",
+            "apa"
+          ]
+        ],
+        "state": [
+          {
+            "project": "apa",
+            "path": "autopilot.continue",
+            "eq": false
+          },
+          {
+            "project": "apa",
+            "path": "autopilot.on",
+            "eq": true
+          }
+        ],
+        "locks_after": "absent",
+        "note": "succeeded + lock + continue: exactly one /go <slug> into the root session; continue cleared, lock freed"
+      },
+      {
+        "id": "ap2",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A2"
+          ],
+          [
+            "delegate",
+            "A2",
+            "apa: step 1"
+          ],
+          [
+            "end",
+            "A2",
+            "failed"
+          ]
+        ],
+        "sent": [],
+        "state": [
+          {
+            "project": "apa",
+            "path": "autopilot.continue",
+            "eq": false
+          }
+        ],
+        "locks_after": "absent",
+        "note": "a failed turn ends the loop: nothing sent, continue cleared"
+      },
+      {
+        "id": "ap3",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A3"
+          ],
+          [
+            "delegate",
+            "A3",
+            "apa: step 1"
+          ],
+          [
+            "end",
+            "A3",
+            "interrupted"
+          ]
+        ],
+        "sent": [],
+        "state": [
+          {
+            "project": "apa",
+            "path": "autopilot.continue",
+            "eq": false
+          }
+        ],
+        "note": "an interrupted turn ends the loop: nothing sent, continue cleared"
+      },
+      {
+        "id": "ap4",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": false,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A4"
+          ],
+          [
+            "delegate",
+            "A4",
+            "apa: step 1"
+          ],
+          [
+            "end",
+            "A4",
+            "succeeded"
+          ]
+        ],
+        "sent": [],
+        "note": "continue false (next.py stopped autopilot): nothing sent"
+      },
+      {
+        "id": "ap5",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          },
+          "apb": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa",
+          "apb"
+        ],
+        "seq": [
+          [
+            "start",
+            "A5"
+          ],
+          [
+            "delegate",
+            "A5",
+            "apa: step 1"
+          ],
+          [
+            "end",
+            "A5",
+            "succeeded"
+          ]
+        ],
+        "sent": [],
+        "alive_has": [
+          "apa",
+          "apb"
+        ],
+        "note": "Review Focus 2: two locked projects both continuing: nothing sent, a note in .harness/plugins-alive"
+      },
+      {
+        "id": "ap6",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          },
+          "apb": {
+            "autopilot": {
+              "on": false,
+              "continue": false,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa",
+          "apb"
+        ],
+        "seq": [
+          [
+            "start",
+            "A6"
+          ],
+          [
+            "delegate",
+            "A6",
+            "apb: step 1"
+          ],
+          [
+            "end",
+            "A6",
+            "succeeded"
+          ],
+          [
+            "start",
+            "A6"
+          ],
+          [
+            "delegate",
+            "A6",
+            "apb: step 1"
+          ],
+          [
+            "end",
+            "A6",
+            "succeeded"
+          ]
+        ],
+        "sent": [
+          [
+            "A6",
+            "apa"
+          ]
+        ],
+        "note": "Review Focus 2: the human's /go B (B not on autopilot) while A is: only A continues, once; B never"
+      },
+      {
+        "id": "ap7",
+        "instance": "fresh",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "seq": [
+          [
+            "start",
+            "A7"
+          ],
+          [
+            "delegate",
+            "A7",
+            "apa: step 1"
+          ],
+          [
+            "end",
+            "A7",
+            "succeeded"
+          ]
+        ],
+        "sent": [],
+        "state": [
+          {
+            "project": "apa",
+            "path": "autopilot.continue",
+            "eq": true
+          }
+        ],
+        "note": "Review Focus 3: plugin restarted (fresh maps), a turn end with no lock: nothing sent, state unchanged"
+      },
+      {
+        "id": "ap7b",
+        "instance": "fresh",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "delegate",
+            "A7b",
+            "apa: step 1"
+          ],
+          [
+            "end",
+            "A7b",
+            "succeeded"
+          ]
+        ],
+        "sent": [],
+        "state": [
+          {
+            "project": "apa",
+            "path": "autopilot.continue",
+            "eq": true
+          }
+        ],
+        "note": "Review Focus 3: restarted mid-turn: a lock and continue, but the turn's start was never seen: nothing sent, state unchanged"
+      },
+      {
+        "id": "ap9",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A9"
+          ],
+          [
+            "delegate_bg",
+            "A9",
+            "apa: step 1"
+          ],
+          [
+            "end",
+            "A9",
+            "succeeded"
+          ],
+          [
+            "check_sent",
+            0
+          ],
+          [
+            "end",
+            "A9-child",
+            "succeeded"
+          ],
+          [
+            "start",
+            "A9"
+          ],
+          [
+            "end",
+            "A9",
+            "succeeded"
+          ]
+        ],
+        "sent": [
+          [
+            "A9",
+            "apa"
+          ]
+        ],
+        "locks_after": "absent",
+        "note": "fact 8: no /go while a slot shows running; the completion turn's own end continues the loop, once"
+      },
+      {
+        "id": "ap10",
+        "set": {
+          "retry": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "retry"
+        ],
+        "seq": [
+          [
+            "start",
+            "A10"
+          ],
+          [
+            "delegate",
+            "A10",
+            "retry: step 1"
+          ],
+          [
+            "end",
+            "A10",
+            "succeeded"
+          ]
+        ],
+        "sent": [],
+        "note": "a project named like a /go word (retry, cap) is never continued: the plugin never sends /go retry"
+      },
+      {
+        "id": "ap11",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A11"
+          ],
+          [
+            "end",
+            "A11",
+            "failed"
+          ],
+          [
+            "start",
+            "B1"
+          ],
+          [
+            "delegate",
+            "B1",
+            "apb: step 1"
+          ],
+          [
+            "end",
+            "B1",
+            "succeeded"
+          ]
+        ],
+        "sent": [],
+        "state": [
+          {
+            "project": "apa",
+            "path": "autopilot.continue",
+            "eq": false
+          }
+        ],
+        "note": "a root turn that fails before any delegation ends the loop: continue cleared; a later delegating turn (the human's /go B) sends no /go A"
+      },
+      {
+        "id": "ap12",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A12"
+          ],
+          [
+            "open",
+            "A12",
+            "apa: step 1"
+          ],
+          [
+            "end",
+            "A12",
+            "interrupted"
+          ],
+          [
+            "start",
+            "B1"
+          ],
+          [
+            "delegate",
+            "B1",
+            "apb: step 1"
+          ],
+          [
+            "end",
+            "B1",
+            "succeeded"
+          ]
+        ],
+        "sent": [],
+        "state": [
+          {
+            "project": "apa",
+            "path": "autopilot.continue",
+            "eq": false
+          }
+        ],
+        "note": "interrupted while the first builder runs (no delegation completed): continue cleared; a later delegating turn sends no /go A"
+      },
+      {
+        "id": "ap13",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A13"
+          ],
+          [
+            "end",
+            "A13",
+            "succeeded"
+          ],
+          [
+            "start",
+            "B1"
+          ],
+          [
+            "delegate",
+            "B1",
+            "apb: step 1"
+          ],
+          [
+            "end",
+            "B1",
+            "succeeded"
+          ]
+        ],
+        "sent": [],
+        "state": [
+          {
+            "project": "apa",
+            "path": "autopilot.continue",
+            "eq": false
+          }
+        ],
+        "note": "a succeeded root turn that never delegated sends nothing and clears continue; a later delegating turn sends no /go A"
+      },
+      {
+        "id": "co5",
+        "set": {
+          "coe": {
+            "cost": {
+              "milestone": "M1",
+              "usd": 2,
+              "project_usd": 2
+            }
+          }
+        },
+        "files": {
+          "mini-projects/coe/ARCHITECTURE.md": "not an architecture\n"
+        },
+        "seq": [
+          [
+            "created",
+            "R5",
+            null,
+            ""
+          ],
+          [
+            "start",
+            "R5"
+          ],
+          [
+            "delegate",
+            "R5",
+            "coe: step 1"
+          ],
+          [
+            "created",
+            "C5",
+            "R5",
+            "coe: step 1"
+          ],
+          [
+            "usage",
+            "C5",
+            0.25
+          ],
+          [
+            "end",
+            "R5",
+            "succeeded"
+          ]
+        ],
+        "state": [
+          {
+            "project": "coe",
+            "path": "cost.milestone",
+            "eq": "M1"
+          },
+          {
+            "project": "coe",
+            "path": "cost.usd",
+            "eq": 2.25
+          },
+          {
+            "project": "coe",
+            "path": "cost.project_usd",
+            "eq": 2.25
+          }
+        ],
+        "sent": [],
+        "note": "an unknown current milestone (docs do not parse) never resets the milestone cost: it keeps adding"
+      },
+      {
+        "id": "ap14",
+        "set": {
+          "apa": {
+            "autopilot": {
+              "on": true,
+              "continue": true,
+              "milestone": "M1",
+              "turns": 1
+            }
+          }
+        },
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A14"
+          ],
+          [
+            "end",
+            "A14",
+            "interrupted"
+          ]
+        ],
+        "sent": [],
+        "state": [
+          {
+            "project": "apa",
+            "path": "autopilot.continue",
+            "eq": false
+          }
+        ],
+        "locks_after": {
+          "apa": "absent"
+        },
+        "go_after": "apa",
+        "note": "interrupted with no delegation: the lock that turn's /go took is freed, so the human's next /go is not refused"
+      },
+      {
+        "id": "ap15",
+        "locks": [
+          "apa",
+          "apb"
+        ],
+        "lock_age_s": {
+          "apa": 600
+        },
+        "seq": [
+          [
+            "start",
+            "S15"
+          ],
+          [
+            "delegate",
+            "S15",
+            "apb: step 1"
+          ],
+          [
+            "start",
+            "A15"
+          ],
+          [
+            "end",
+            "A15",
+            "interrupted"
+          ]
+        ],
+        "sent": [],
+        "locks_after": {
+          "apa": "present",
+          "apb": "present"
+        },
+        "note": "never another session's lock: one taken before this turn started (apa), one whose project another open turn delegates (apb)"
+      },
+      {
+        "id": "ap16",
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A16"
+          ],
+          [
+            "open",
+            "A16",
+            "apa: step 1"
+          ],
+          [
+            "created",
+            "K16",
+            "A16",
+            "apa: step 1"
+          ],
+          [
+            "wait",
+            2200
+          ],
+          [
+            "tool",
+            "K16"
+          ],
+          [
+            "end",
+            "A16",
+            "interrupted"
+          ]
+        ],
+        "sent": [],
+        "locks_after": {
+          "apa": "absent"
+        },
+        "go_after": "apa",
+        "note": "Esc while the first builder runs: its tool calls refreshed the lock (later than the turn start), and that lock is still freed; the next /go is not refused"
+      },
+      {
+        "id": "ap17",
+        "locks": [
+          "apa"
+        ],
+        "seq": [
+          [
+            "start",
+            "A17"
+          ],
+          [
+            "start",
+            "S17"
+          ],
+          [
+            "open",
+            "S17",
+            "research this"
+          ],
+          [
+            "created",
+            "K17",
+            "S17",
+            "apa: step 1"
+          ],
+          [
+            "wait",
+            2200
+          ],
+          [
+            "tool",
+            "K17"
+          ],
+          [
+            "end",
+            "A17",
+            "interrupted"
+          ]
+        ],
+        "sent": [],
+        "locks_after": {
+          "apa": "present"
+        },
+        "note": "a lock this instance refreshed for another root's turn is never freed by this root's turn end"
+      }
+    ]
+  },
+  "browser": {
+    "project": "brp",
+    "port": 4811,
+    "created": [
+      [
+        "d1",
+        "broot",
+        "brp: visual",
+        "designer"
+      ],
+      [
+        "r1",
+        "broot",
+        "brp: research step 1",
+        "researcher"
+      ],
+      [
+        "b1",
+        "broot",
+        "brp: step 1",
+        "builder"
+      ]
+    ],
+    "symlinks": [
+      [
+        "design/shots/out",
+        "$ROOT"
+      ]
+    ],
+    "ops": [
+      {
+        "id": "br1",
+        "note": "the designer opens its own project's preview (127.0.0.1 or localhost, its port) and saves screenshots in design/shots/",
+        "calls": [
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "url": "http://127.0.0.1:4811/"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "url": "http://localhost:4811/app?x=1"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": "mini-projects/brp/design/shots/home.png"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": "$ROOT/mini-projects/brp/design/shots/abs.png"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {},
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "br2",
+        "note": "the designer may not open another port, another host, https or file:",
+        "calls": [
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "url": "http://127.0.0.1:4812/"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          },
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "url": "https://example.com"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          },
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "url": "file:///etc/passwd"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          },
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "url": "http://127.0.0.1.evil.example:4811/"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          },
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "url": "https://127.0.0.1:4811/"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          },
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "url": "http://0.0.0.0:4811/"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          },
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "url": "not a url"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          },
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "url": "http://127.0.0.1/"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          }
+        ]
+      },
+      {
+        "id": "br3",
+        "note": "a designer screenshot outside its project's design/shots/ (a relative name resolves against the WORKSHOP) is refused",
+        "calls": [
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": "design/shots/x.png"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser."
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": "mini-projects/brp/design/x.png"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser."
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": "mini-projects/brp/design/shots/../../x.png"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser."
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": "mini-projects/scopep/design/shots/x.png"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser."
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": "mini-projects/brp/design/shots/out/x.png"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser."
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": "/tmp/x.png"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser."
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": "~/x.png"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser."
+          }
+        ]
+      },
+      {
+        "id": "br4",
+        "note": "the researcher navigates as before and takes inline screenshots, but no agent except the designer saves a browser file",
+        "calls": [
+          {
+            "tool": "playwright_browser_navigate",
+            "agent": "researcher",
+            "sid": "r1",
+            "input": {
+              "url": "https://example.com"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "researcher",
+            "sid": "r1",
+            "input": {},
+            "expect": "allow"
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "researcher",
+            "sid": "r1",
+            "input": {
+              "filename": "RESEARCH/x.png"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: browser file."
+          },
+          {
+            "tool": "playwright_browser_snapshot",
+            "agent": "researcher",
+            "sid": "r1",
+            "input": {
+              "filename": "x.md"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: browser file."
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "builder",
+            "sid": "b1",
+            "input": {
+              "filename": "mini-projects/brp/design/shots/x.png"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: browser file."
+          }
+        ]
+      },
+      {
+        "id": "br5",
+        "note": "the designer's URL check covers every browser tool with a url (browser_tabs new), not only navigate",
+        "calls": [
+          {
+            "tool": "playwright_browser_tabs",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "action": "new",
+              "url": "https://example.com"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          },
+          {
+            "tool": "playwright_browser_tabs",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "action": "new",
+              "url": "http://127.0.0.1:4812/"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          },
+          {
+            "tool": "playwright_browser_tabs",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "action": "new",
+              "url": 7
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser. Only http://127.0.0.1:4811 of this project."
+          },
+          {
+            "tool": "playwright_browser_tabs",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "action": "new",
+              "url": "http://localhost:4811/"
+            },
+            "expect": "allow"
+          },
+          {
+            "tool": "playwright_browser_tabs",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "action": "list"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "br6",
+        "note": "the filename is checked as the MCP uses it, untrimmed: a leading space or a blank name is a file outside design/shots/",
+        "calls": [
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": " mini-projects/brp/design/shots/x.png"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser."
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "designer",
+            "sid": "d1",
+            "input": {
+              "filename": " "
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: designer browser."
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "researcher",
+            "sid": "r1",
+            "input": {
+              "filename": " "
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: browser file."
+          },
+          {
+            "tool": "playwright_browser_take_screenshot",
+            "agent": "researcher",
+            "sid": "r1",
+            "input": {
+              "filename": ""
+            },
+            "expect": "allow"
+          }
+        ]
+      }
+    ]
+  }
 }

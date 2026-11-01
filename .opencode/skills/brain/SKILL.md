@@ -1,6 +1,6 @@
 ---
 name: brain
-description: The harness brain - rules, patterns, anti-patterns, evals. Load the rule files you need before acting, and evolve them at project end.
+description: The harness rulebook (brain/rules). Load the rule files you need before acting.
 license: MIT
 compatibility: opencode
 metadata:
@@ -11,17 +11,13 @@ metadata:
 Home: `~/Projects/opencode/brain/` (workshop repo, tracked in git)
 - `rules/NNN-*.md` - rules that change behaviour (one idea each, <40 lines)
 - `prompts/` - reusable prompt fragments (output contract, gate contract)
-- `patterns/` - good reusable patterns
-- `anti-patterns/` - traps that already bit us
-- `evals/` - tasks + pass criteria
-- `CHANGELOG.md` - brain version history
+- `CHANGELOG.md` - harness version history
 
 ## How to use
 1. Core rules (`brain/rules/000-core.md`) are always in context via `instructions` in `.opencode/opencode.json`.
 2. Before non-trivial work, scan rule filenames + one-line summaries. Read ONLY the 1-3 rules that match the task.
 3. If a rule contradicts the task, the rule wins unless human says otherwise.
 4. After a task teaches you something: write it in the project's `LEARNINGS.md`.
-5. At project end: `/ship` -> after the human commits, the brain agent writes one proposal to `brain/proposals/` -> the human applies what they approve.
 
 ## Rule index (read file when relevant)
 - 000-core - always on: verify before claim, no scope creep, ask when unsure, small diffs, cite sources
@@ -29,7 +25,6 @@ Home: `~/Projects/opencode/brain/` (workshop repo, tracked in git)
 - 015-enforcement - gates live in code not prompts; never work around a refusal
 - 020-gates - the v4 gates: purpose, brief lock, design chain + critique, one approval hash, plan gate, step checks, fresh SHIP review, confinement, limits (2 attempts, 16 delegations, 30-minute lock), push/publish human-only
 - 030-research - how to gather and cite facts
-- 040-learning - promotion bar, rule lifecycle, decay (/ship drafts, /status brain shows DECAY)
 - 050-mini-project - project files (BRIEF, ARCHITECTURE, PLAN, CRITIQUE, REVIEW and their formats), state.json, nested git repo
 - 060-ops - platform gotchas: project-local install, nested checkouts, permission order, saved approvals, headless runs, $PWD, agent-shell sandbox, delegation events, model/frontmatter/$ARGUMENTS traps
 
