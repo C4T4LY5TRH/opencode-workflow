@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start a project's preview server for an AGENT (the designer), detached, on the project's own port.
+# Start a project's preview server for an AGENT (the inspector), detached, on the project's own port.
 #
 # usage:  bash scripts/preview.sh <slug>      (agents only: AGENT=1)
 #

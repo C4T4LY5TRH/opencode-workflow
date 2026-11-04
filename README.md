@@ -9,8 +9,8 @@ opencode                     # orchestrator is the default agent
 /new "your idea"             # scaffold; the brainstormer drafts BRIEF.md and asks questions (answer in chat)
 /go                          # lock the brief; architect, designer, planner, critic run; code prints the approval digest -> stop
 /approve                     # you read the digest, open the mockups, approve (or /critique for another round)
-/go                          # autopilot: tests, build (3 steps at once), verify, review; stops at SHIP (/stop to stop early)
-/ship                        # checklist; records the milestone; you commit
+/go                          # autopilot: tests, build (one step at a time), verify, review; stops at SHIP (/stop to stop early)
+/ship                        # checklist; /ship yes commits, tags and records the milestone (/deploy, /publish, /undo follow)
 ```
 The harness lives in this repo only (`.opencode/`). Outside this folder, opencode is plain opencode.
 Changes to `.opencode/` apply on save; there is no install step.
@@ -27,19 +27,21 @@ Your Claude Code skills are deliberately hidden from opencode (see `TELEPORT.md`
 AGENTS.md            rules loaded in every session here (voice, flow, gates)
 .opencode/           what opencode loads: opencode.json (models, permissions, policies), agents/, commands/, skills/, plugins/
 brain/               rules/, prompts/, CHANGELOG.md
-scripts/             harness_state.py, harness_docs.py, next.py, status.py, approve.sh, new-project.sh, bench.sh, gate-test.mjs, state-test.py, bootstrap.sh
+scripts/             harness_state.py, harness_docs.py, next.py, checkpoint.py, deploy.py, status.py, approve.sh, new-project.sh, bench.sh, gate-test.mjs, state-test.py, bootstrap.sh
 mini-projects/       one folder = one project = its own git repo; _template/ is the scaffold
 docs/                audit evidence, specs and plans, history
 .harness/            runtime state (gitignored): dashboard.html, plugin heartbeat, events log, bench history
 ```
 
-## Commands (11)
+## Commands (13)
 ```
 /new "<idea>"     scaffold + first BRIEF.md draft   /status [slug]   where everything is (+ .harness/dashboard.html)
 /brainstorm [topic|brief]  another round            /critique              one more critic round
-/go [retry | cap <usd>]  next thing, or autopilot   /hunt [focus]          BUGHUNT.md (hunter -> skeptic -> referee)
+/go [retry | cap <usd>]  next thing, or autopilot
 /approve          you approve the documents         /review                REVIEW.md on demand
-/ship             checklist; you commit             /research <q>          RESEARCH/ (cited)
+/ship [yes]        checklist; yes commits + tags     /research <q>          RESEARCH/ (cited)
+/deploy [rollback|stop]  run the shipped milestone here   /publish [yes]  push to a private GitHub repo
+/undo             back to the last save point
 /stop             autopilot stops after this turn   (the slug is optional everywhere: none = current project)
 ```
 

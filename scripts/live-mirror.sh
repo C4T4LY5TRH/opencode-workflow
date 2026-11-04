@@ -5,8 +5,9 @@
 #
 #   bash scripts/live-mirror.sh     -> prints the mirror path
 #
-# - rsync -a --delete of the worktree, without .git, .harness/, .gate-test-*, .superpowers/, mini-projects/* (but
-#   _template/). Excluded paths are also never deleted in the mirror, so its own .harness/ and projects survive.
+# - rsync -a --delete of the worktree, without .git, .harness/, .gate-test-*, .superpowers/, apps/ (deployed apps),
+#   mini-projects/* (but _template/). Excluded paths are also never deleted in the mirror, so its own .harness/,
+#   apps and projects survive.
 # - git init in the mirror if it has no repo of its own (opencode and the bench expect one).
 # - the main checkout's mini-projects/git-course is copied ONCE (an existing mirror copy is never overwritten);
 #   the main checkout is only read, never written.
@@ -24,7 +25,7 @@ mkdir -p "$MIRROR"
 # "/.git" without a trailing slash: in a worktree .git is a FILE (gitdir: <main>/.git/worktrees/...); copying it would
 # make every git command in the mirror act on the real repo.
 rsync -a --delete \
-  --exclude '/.git' --exclude '/.harness/' --exclude '/.gate-test-*' --exclude '/.superpowers/' \
+  --exclude '/.git' --exclude '/.harness/' --exclude '/.gate-test-*' --exclude '/.superpowers/' --exclude '/apps/' \
   --include '/mini-projects/_template/' --exclude '/mini-projects/*' \
   "$WORKTREE/" "$MIRROR/"
 

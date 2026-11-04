@@ -27,7 +27,7 @@ const POINTER = [
   "## BRAIN ACTIVE",
   `Rules live in ${RULES}. Load with the \`brain\` skill when a rule matters.`,
   "Core rules (always): verify before claim - no scope creep - ask when unsure - small diff - cite sources.",
-  "Gates: approved plan -> steps with passing checks -> fresh SHIP review -> ship (human commits).",
+  "Gates: approved plan -> steps with passing checks -> fresh SHIP review -> ship (trusted commit).",
 ].join("\n")
 
 function brainRuleIndex(): string {

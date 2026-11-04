@@ -4,10 +4,10 @@
 //
 //   node scripts/gate-test.mjs        (Node 22+ runs the .ts plugin directly)
 //
-// Scope: what the PLUGIN owns (ship gate, plan gate + approval, write confinement, check/verdict recording through
+// Scope: what the PLUGIN owns (plan gate + approval, write confinement, check/verdict recording through
 // one write queue, the circuit breaker, at most 3 open delegations, each builder confined to its step, the /go lock
 // refresh and its clean-up at a delegating turn's end, the autopilot loop that only ever sends /go, cost per project
-// and milestone, the designer's browser limits),
+// and milestone, the inspector's browser limits),
 // scripts/approve.sh (the only writer of the approval the plan gate reads), and the
 // OS sandbox for agent shells (shell hook + scripts/sandbox/, run for real; macOS).
 // Destructive commands are the policy layer's job; scripts/bench.py checks those.
@@ -22,19 +22,31 @@ process.env.HARNESS_TEST = "1" // the plugin must not write its load heartbeat d
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PLUGIN = path.resolve(HERE, "..", ".opencode", "plugins", "safety-gate.ts")
 const spec = JSON.parse(fs.readFileSync(path.join(HERE, "gate-cases.json"), "utf8"))
+{ // a result line names its case by id (report): one id, one case, across everything printed
+  const seen = new Set(["h1", "h2", "h3", "k14", "dash1", "dash2", "loop/ap8"])
+  const plain = [...spec.cases, ...spec.sandbox, ...spec.steps.ops, ...spec.browser.ops].map((c) => c.id)
+  const prefixed = ["v4docs", "breaker", "parallel", "lock", "scope", "record", "loop"]
+    .flatMap((s) => (Array.isArray(spec[s]) ? spec[s] : spec[s].ops).map((c) => `${s}/${c.id}`))
+  for (const id of [...plain, ...prefixed]) {
+    if (seen.has(id)) throw new Error(`gate-cases.json: duplicate case id ${id}`)
+    seen.add(id)
+  }
+}
 
 // The fixture lives in the workshop (gitignored), not in the temp dir: the sandbox lets agents
 // write temp dirs, so sandbox cases there would pass for the wrong reason.
 const root = fs.realpathSync.native(fs.mkdtempSync(path.resolve(HERE, "..", ".gate-test-")))
 process.on("exit", () => fs.rmSync(root, { recursive: true, force: true })) // also after a crash
+// a REVIEW.md records a verdict only with a line for every ## Hunt lens (spec 6)
+const HUNT = "## Hunt\n" + ["logic", "edge cases", "concurrency", "resource leaks", "runtime failures"].map((l) => `- ${l}: checked it\n`).join("")
 for (const rel of spec.fixture) {
   const p = path.join(root, rel)
   fs.mkdirSync(path.dirname(p), { recursive: true })
-  // REVIEW.md needs a real verdict: good/ ships, rework/ does not
+  // REVIEW.md needs a real verdict line
   let body = "x\n"
   // PLAN.md must parse (approve.sh refuses anything else): one valid step
   if (rel.endsWith("/PLAN.md")) body = "## SCOPE\nIN: x\n## STEPS\n### 1. hello\n- files: hello.txt\n- done when: `true`\n## ACCEPTANCE\nit runs\n"
-  if (rel.endsWith("REVIEW.md")) body = rel.includes("/rework/") ? "## VERDICT: REWORK\n" : "## VERDICT: SHIP\n"
+  if (rel.endsWith("REVIEW.md")) body = "## VERDICT: SHIP\n" + HUNT
   fs.writeFileSync(p, body)
 }
 
@@ -70,7 +82,7 @@ process.on("exit", () => { for (const d of sockDirs) fs.rmSync(d, { recursive: t
 const APPROVE = path.join(root, "scripts", "approve.sh")
 fs.mkdirSync(path.dirname(APPROVE), { recursive: true })
 fs.copyFileSync(path.resolve(HERE, "approve.sh"), APPROVE)
-for (const f of ["harness_state.py", "harness_docs.py"]) fs.copyFileSync(path.resolve(HERE, f), path.join(path.dirname(APPROVE), f)) // approve.sh execs harness_state.py from its own dir; it imports harness_docs.py
+for (const f of ["harness_state.py", "harness_docs.py", "checkpoint.py"]) fs.copyFileSync(path.resolve(HERE, f), path.join(path.dirname(APPROVE), f)) // approve.sh execs harness_state.py from its own dir; it imports harness_docs.py (and checkpoint.py for the approval's save point)
 const human = { ...process.env }
 delete human.AGENT
 delete human.OPENCODE_SESSION_ID
@@ -80,7 +92,7 @@ const approve = (slug, env = human) => spawnSync("bash", [APPROVE, slug], { env,
 const V4_BRIEF = "# BRIEF - fixture\n## SUMMARY\nA fixture.\n## WHERE IT RUNS\n- ui: no\n## FEATURES\n- F1 [MUST] it runs\n## OPEN QUESTIONS\n- none\n"
 const V4_ARCH = "# ARCHITECTURE - fixture\n## SUMMARY\nA fixture.\n## RISKS\n- R1: it may not run - test: run it once\n" +
   "## DECISIONS\n- D1: plain files - rejected: a database - why: nothing to store\n## MILESTONES\n- M1: it runs - covers: F1\n" +
-  "## CRITIQUE ANSWERS\n- C1: fixed - see D1\n"
+  "## DEPLOY\n- kind: none\n## CRITIQUE ANSWERS\n- C1: fixed - see D1\n"
 const V4_CRITIQUE = "# CRITIQUE - fixture\n## SUMMARY\nOne point.\n## ROUND 1 - M1\n- C1 [serious] [architecture] the strongest case against - fix: see D1\n"
 const v4Plan = (steps) => "# PLAN - fixture\n## SUMMARY\nOne milestone.\n## MILESTONE\nM1: it runs\n## SCOPE\nIN: x\n## STEPS\n" +
   steps.map(([title, files, check], i) => `### ${i + 1}. ${title}\n- files: ${files}\n- covers: ${i === 0 ? "F1" : "none"}\n` +
@@ -119,7 +131,7 @@ for (const slug of spec.steps.projects) {
   fs.mkdirSync(path.join(dir, "src"), { recursive: true })
   v4Project(dir, STEP_STEPS)
   fs.writeFileSync(path.join(dir, "src", "a.js"), "one\n")
-  if (slug === "stepr") fs.writeFileSync(path.join(dir, "REVIEW.md"), "## VERDICT: SHIP\n")
+  if (slug === "stepr") fs.writeFileSync(path.join(dir, "REVIEW.md"), "## VERDICT: SHIP\n" + HUNT)
   const r = approve(slug)
   if (r.status !== 0) throw new Error(`approve.sh failed for ${slug}: ${r.stdout} ${r.stderr}`)
   // the critique was needed to approve; the approval hash does not cover it, and case c3 (a write to critique.md is an
@@ -200,7 +212,7 @@ async function hooks(session) {
   return h
 }
 
-// a project the ship gate must let through needs its REVIEW.md recorded, the way a real write would
+// a project with its review recorded, the way a real REVIEW.md write would record it
 for (const proj of spec.review_after_approve) {
   await (await hooks(proj))["execute.after"]?.({
     tool: "write", input: { path: path.join(root, proj, "REVIEW.md") }, status: "completed", result: {},
@@ -218,12 +230,16 @@ for (const c of [...spec.cases, ...spec.v4docs.map((v) => ({ ...v, id: `v4docs/$
   }
   const input = JSON.parse(JSON.stringify(c.input).replaceAll("$ROOT_CASE", ROOT_CASE).replaceAll("$ROOT", root))
   let got = "allow", msg = ""
+  const realHome = process.env.HOME
+  if (c.home) process.env.HOME = path.join(root, "home") // the plugin reads HOME per call: agent.sb's HOME rules on the fixture
   try {
     // these gates hold for every agent; the builder/qa/designer write scopes have their own section below
     await h["execute.before"]({ tool: c.tool, input, agent: c.agent ?? "any", sessionID: "s", id: "t", messageID: "m" })
   } catch (e) {
     got = "block"
     msg = String(e?.message)
+  } finally {
+    process.env.HOME = realHome
   }
   // message_has pins WHICH gate refused (a block for the wrong reason is a failure)
   const why = c.message_has && got === "block" && !msg.includes(c.message_has)
@@ -234,8 +250,8 @@ for (const c of [...spec.cases, ...spec.v4docs.map((v) => ({ ...v, id: `v4docs/$
 // workshop-root plugin instance. Session ids carry the section name, so no section sees another's counts.
 // An op runs, in order: write_locks, fill (calls that must all pass), full (the session must now be at the cap),
 // open (a call with no execute.after yet), close (its execute.after), events, then the checked calls / lock files.
-// A call may carry extra input ([session, agent, n, {background: true}]). "instance": "flaky" runs the op on a plugin
-// instance whose first ctx.event.subscribe() throws (the loop must subscribe again).
+// A call or open may carry extra input ([session, agent, n, {background: true}]); a close may carry its error text.
+// "instance": "flaky" runs the op on a plugin instance whose first ctx.event.subscribe() throws (the loop must subscribe again).
 let callNo = 0
 const flaky = {}
 {
@@ -248,11 +264,12 @@ const flaky = {}
     event: { subscribe: () => { if (tries++ === 0) throw new Error("no stream yet"); return subscribe() } },
   })
 }
-for (const section of ["breaker", "parallel", "lock"]) {
+for (const section of ["breaker", "parallel", "lock", "fallback"]) {
   let h = await hooks("")
   const rootHooks = h
   const ev = (s, agent, extra = {}) => ({
-    tool: "subagent", input: { agent, description: "x", prompt: "x", ...extra }, agent: "orchestrator",
+    // the lock section's delegations name their project, as the orchestrator's do: a turn end frees only its own lock (U10)
+    tool: "subagent", input: { agent, description: section === "lock" ? "lockp: x" : "x", prompt: "x", ...extra }, agent: "orchestrator",
     sessionID: `${section}:${s}`, id: `call_${++callNo}`, messageID: "m",
   })
   const before = async (e) => {
@@ -260,8 +277,8 @@ for (const section of ["breaker", "parallel", "lock"]) {
   }
   // "running": the host moved the call to the background (L124); its child is `<session>-child`
   const bgOut = (e) => ({ sessionID: `${e.sessionID}-child`, status: "running", output: "" })
-  const after = (e, status = "completed") =>
-    h["execute.after"]?.(status === "error" ? { ...e, status, error: new Error("x") }
+  const after = (e, status = "completed", why = "x") =>
+    h["execute.after"]?.(status === "error" ? { ...e, status, error: new Error(why) }
       : status === "running" ? { ...e, status: "completed", result: { output: bgOut(e), metadata: bgOut(e) } }
       : { ...e, status, result: { output: "ok" } })
   const open = new Map()
@@ -277,12 +294,12 @@ for (const section of ["breaker", "parallel", "lock"]) {
       }
     }
     if (op.full && !(await before(ev(op.full, "probe"))).includes("circuit breaker")) problems.push(`${op.full} is not at the cap`)
-    for (const [s, agent] of op.open ?? []) {
-      const e = ev(s, agent), msg = await before(e)
+    for (const [s, agent, extra] of op.open ?? []) {
+      const e = ev(s, agent, extra), msg = await before(e)
       if (msg) problems.push(`open refused: ${msg.slice(0, 60)}`)
       open.set(`${s}/${agent}`, e)
     }
-    for (const [s, agent, status] of op.close ?? []) await after(open.get(`${s}/${agent}`), status)
+    for (const [s, agent, status, why] of op.close ?? []) await after(open.get(`${s}/${agent}`), status, why)
     for (const [type, s] of op.events ?? []) pushEvent({ id: `evt_${++callNo}`, type, created: Date.now(), data: { sessionID: `${section}:${s}` } })
     if (op.events) await new Promise((r) => setTimeout(r, 20)) // the plugin's event loop runs between ticks
     let got = "allow", msg = ""
@@ -307,9 +324,10 @@ for (const section of ["breaker", "parallel", "lock"]) {
 // sandbox: run each command the way opencode would after the shell hook (AGENT=1 marks agent shells)
 for (const c of spec.sandbox) {
   const h = await hooks(c.session)
-  const env = { ...human, HOME: path.join(root, "home"), HARNESS_TEST_TOKEN: "x" }
+  const env = { ...human, HOME: path.join(root, "home") + (c.home ?? ""), HARNESS_TEST_TOKEN: "x", HARNESS_TEST_PASS: "x", HARNESS_TEST_AUTH: "x", harness_test_password: "x", "npm_config_//registry.example/:_authToken": "x", "gate-odd.name": "1" }
+  for (const [k, v] of Object.entries(c.env ?? {})) env[k] = String(v).replaceAll("$ROOT", root) // per-case (XDG dirs)
   const command = c.command.replaceAll("$SOCK_AGENT", SOCK_AGENT).replaceAll("$SOCK_OTHER", SOCK_OTHER)
-  const inv = { command, cwd: c.cwd ?? path.join(root, c.session), timeout: 0, shell: "/bin/zsh", env }
+  const inv = { command, cwd: c.cwd ?? path.join(root, c.session), timeout: 0, shell: c.shell ?? "/bin/zsh", env } // bash, unlike zsh, hands odd-named variables on
   if (!h["shell.create.before"]) {
     report(c.id, false, c.expect, "nohook", c.note)
     continue
@@ -337,12 +355,7 @@ for (const op of spec.steps.ops) {
   const input = JSON.parse(JSON.stringify(op.input).replaceAll("$ROOT", root))
   const ev = { tool: op.tool, input, agent: "builder", sessionID: "s", id: "t", messageID: "m" }
   const problems = []
-  if (op.hook === "before") {
-    let got = "allow", msg = ""
-    try { await h["execute.before"](ev) } catch (e) { got = "block"; msg = String(e.message) }
-    if (got !== op.expect.gate) problems.push(`gate ${got}`)
-    if (op.expect.message_has && !msg.includes(op.expect.message_has)) problems.push(`message was: ${msg}`)
-  } else {
+  { // every step op is an execute.after (the ship gate's execute.before ops went with it, Task 10)
     const r = op.result ?? {}
     const output = { ...r }
     if (r.lines) { output.output = lines(1, r.lines) + "\n"; delete output.lines }
@@ -422,7 +435,7 @@ async function beforeCalls(label, h, sid, op) {
   }
 }
 
-// the designer's browser (spec 9.3 fact 6, ruling C5+): navigation only to its project's preview port, screenshot files
+// the inspector's browser (spec 9.3 fact 6, ruling C5+): navigation only to its project's preview port, screenshot files
 // only in its project's design/shots/ (a relative name is the WORKSHOP's, the MCP's cwd); no other agent saves a file
 {
   const B = spec.browser, dir = path.join(root, "mini-projects", B.project), sid = (s) => `br:${s}`
@@ -493,11 +506,15 @@ async function beforeCalls(label, h, sid, op) {
       else if (kind === "check_sent") {
         await sleep(300)
         if (sent.length !== s) problems.push(`${sent.length} command() calls while a slot still runs`)
-      } else { // delegate | delegate_bg | open: one subagent call from the root, completed (or moved to the background,
-        // or still running: no execute.after)
+      } else { // delegate | delegate_bg | open | delegate_fail: one subagent call from the root, completed (or moved to
+        // the background, or still running: no execute.after, or failed: the worker's provider blocked it, run B)
         const e = { tool: "subagent", input: { agent: "builder", description: a, prompt: "x" }, agent: "orchestrator", sessionID: sid(s), id: `call_${++callNo}`, messageID: "m" }
         await h["execute.before"](e)
         if (kind === "open") continue
+        if (kind === "delegate_fail") {
+          await h["execute.after"]({ ...e, status: "error", error: `Subagent failed (sessionID: ${sid(s)}-child): Provider blocked the response` })
+          continue
+        }
         const out = { sessionID: `${sid(s)}-child`, status: "running", output: "" }
         await h["execute.after"](kind === "delegate_bg" ? { ...e, status: "completed", result: { output: out, metadata: out } } : { ...e, status: "completed", result: { output: "ok" } })
       }
@@ -562,12 +579,25 @@ async function beforeCalls(label, h, sid, op) {
     }
     const st = JSON.stringify(p.state, null, 2) // "$TREE": the project's tree hash as its files stand now
     fs.writeFileSync(path.join(dir, ".harness", "state.json"), st.includes('"$TREE"') ? st.replaceAll('"$TREE"', JSON.stringify(hashOf("tree_sha256", slug))) : st)
+    if (p.git) { // its own repo (spec 4.1 own-repo rule), its own identity, every file so far in one base commit
+      fs.writeFileSync(path.join(dir, ".gitignore"), ".harness/\n")
+      for (const args of [["init", "-q", "-b", "main"], ["config", "user.email", "gate-test@example.invalid"], ["config", "user.name", "gate-test"],
+        ["add", "-A"], ["-c", "commit.gpgsign=false", "commit", "-qm", "base"]]) {
+        const r = spawnSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: dir, encoding: "utf8" })
+        if (r.status !== 0) throw new Error(`git ${args[0]} failed in ${slug}: ${r.stderr}`)
+      }
+    }
   }
+  const gitOut = (slug, ...args) => spawnSync("git", ["-C", path.join(root, "mini-projects", slug), ...args], { encoding: "utf8" }).stdout
+  const PRIVATE_KEY = "-----BEGIN RSA " + "PRIVATE KEY-----" // built from pieces: this repo never holds the literal
   const h = await hooks("")
   const sid = (s) => `rec:${s}`
   const at = (doc, p) => p.split(".").reduce((o, k) => (o == null ? undefined : o[Array.isArray(o) ? Number(k) : k]), doc)
   for (const op of R.ops) {
-    for (const [rel, body] of Object.entries(op.files ?? {})) fs.writeFileSync(path.join(root, rel), body)
+    for (const [rel, body] of Object.entries(op.files ?? {})) {
+      fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
+      fs.writeFileSync(path.join(root, rel), body.replaceAll("$PRIVATE_KEY", PRIVATE_KEY))
+    }
     for (const [c, p, title, agent] of op.created ?? []) created(sid(c), sid(p), title, agent)
     if (op.created) await sleep(20)
     const fire = (c) => {
@@ -582,6 +612,16 @@ async function beforeCalls(label, h, sid, op) {
     else for (const c of op.calls) await fire(c)
     const problems = []
     for (const x of op.expect) {
+      if (x.git) { // the save points in the project's own repo: how many, and what the last one holds and says
+        const g = x.git, count = Number(gitOut(x.project, "rev-list", "--count", "HEAD").trim())
+        const files = gitOut(x.project, "show", "--name-only", "--format=", "HEAD").split("\n").filter(Boolean).sort()
+        const msg = gitOut(x.project, "log", "-1", "--format=%B")
+        if (g.count !== undefined && count !== g.count) problems.push(`${x.project} has ${count} commits`)
+        if (g.subject !== undefined && msg.split("\n")[0] !== g.subject) problems.push(`${x.project} subject ${JSON.stringify(msg.split("\n")[0])}`)
+        if (g.files && JSON.stringify(files) !== JSON.stringify(g.files)) problems.push(`${x.project} HEAD holds ${files.join(", ")}`)
+        for (const want of [g.has, g.body_has].filter(Boolean)) if (!msg.includes(want)) problems.push(`${x.project} message lacks ${JSON.stringify(want)}`)
+        continue
+      }
       const rel = x.file ?? ".harness/state.json"
       let doc
       try {
@@ -591,7 +631,8 @@ async function beforeCalls(label, h, sid, op) {
         continue
       }
       const v = at(doc, x.path)
-      const want = x.eq === "$TREE" ? hashOf("tree_sha256", x.project) : x.eq === "$TESTS" ? hashOf("tests_sha256", x.project) : x.eq
+      const want = x.eq === "$TREE" ? hashOf("tree_sha256", x.project) : x.eq === "$TESTS" ? hashOf("tests_sha256", x.project)
+        : x.eq === "$HEAD" ? gitOut(x.project, "rev-parse", "HEAD").trim() : x.eq
       const ok = "set" in x ? (v != null) === x.set
         : "eq" in x ? JSON.stringify(v) === JSON.stringify(want)
         : "ne" in x ? v !== x.ne
@@ -631,7 +672,7 @@ const settle = async (want) => { // want(page) true, then the file is stable and
   return readDash()
 }
 const stepPage = await settle((p) => spec.steps.projects.every((s) => p.includes(s)))
-okCase("s1", spec.steps.projects.every((s) => stepPage.includes(s)) && stepPage.includes('<meta http-equiv="refresh" content="5">'),
+okCase("dash1", spec.steps.projects.every((s) => stepPage.includes(s)) && stepPage.includes('<meta http-equiv="refresh" content="5">'),
   "dashboard: the plugin's spawn after step results writes the (fixture) dashboard")
 fs.rmSync(DASH, { force: true })
 await (await hooks("mini-projects/stepr"))["execute.after"]?.({
@@ -639,9 +680,9 @@ await (await hooks("mini-projects/stepr"))["execute.after"]?.({
   agent: "reviewer", sessionID: "s", id: "t", messageID: "m",
 })
 const revPage = await settle((p) => p.includes("stepr"))
-okCase("s2", revPage.includes("stepr"), "dashboard: the plugin's spawn after a review record rewrites it")
+okCase("dash2", revPage.includes("stepr"), "dashboard: the plugin's spawn after a review record rewrites it")
 
 
-const total = spec.cases.length + spec.v4docs.length + spec.breaker.length + spec.parallel.length + spec.lock.length + scriptCases.length + spec.sandbox.length + spec.steps.ops.length + spec.scope.ops.length + spec.browser.ops.length + spec.loop.ops.length + 1 + spec.record.ops.length + 1 + 2
+const total = spec.cases.length + spec.v4docs.length + spec.breaker.length + spec.parallel.length + spec.lock.length + spec.fallback.length + scriptCases.length + spec.sandbox.length + spec.steps.ops.length + spec.scope.ops.length + spec.browser.ops.length + spec.loop.ops.length + 1 + spec.record.ops.length + 1 + 2
 console.log(`\ngate-test: ${total - fail}/${total} passed`)
 process.exit(fail ? 1 : 0)

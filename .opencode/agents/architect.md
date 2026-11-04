@@ -63,6 +63,13 @@ tree-drawing characters (`├──`, `└──`, `│`).>
 ## MILESTONES
 - M1: prove R1 + walking skeleton — covers: F1, F4
 - M2: <title> — covers: F2, F3
+## DEPLOY
+- kind: service | none          (none = a library or CLI: then this is the only line)
+- build: <one command, run inside the release folder> | none
+- start: <one command; must listen on 0.0.0.0:$PORT>
+- port: <1024-65535, not 4800-4899>
+- health: <path that must answer 2xx, e.g. />
+- data: yes | no          (yes = the app keeps its data in $DATA_DIR)
 ## CRITIQUE ANSWERS
 <empty until you answer the critic (see ANSWER)>
 ```
@@ -73,6 +80,9 @@ RULES:
 - M1 = prove R1 + a walking skeleton: the thinnest version that works end to end. Later milestones go wide.
 - Every [MUST] feature of BRIEF.md is in exactly one milestone. Use only F-ids from BRIEF.md. Milestones run M1..Mn.
 - DECISIONS are append-only: never delete or reword a D line. A change of mind is a new D<n> that names the old one.
+- Unit and regression tests live under `tests/` (never `tests/acceptance/`: that is QA's); STRUCTURE lists them there.
+- Write a `## DEPLOY` section (one line per value). A service accepts the Host `$PUBLIC_HOST` (else it refuses the phone)
+  and keeps its data in `$DATA_DIR`.
 - Boring, proven stack. One person builds, runs and hosts it, with little time. No paid service the brief does not ask for.
 - A fact you need and do not have (an API, a limit, a price, what a library supports): write `- UNKNOWN: <question>`
   under RISKS and name it under BLOCKED, so the orchestrator asks the researcher. Never guess an API.
@@ -97,5 +107,6 @@ DID: <file you wrote, or "no file">
 BASIS: <files you read. Never an invented command.>
 BLOCKED: <"none", or UNKNOWN: <question> | the researcher finds it, or what stopped you | the ONE thing that unblocks it>
 NEXT: <single next action>
+To read lines N-M of a file, use the read tool with offset/limit (a shell `sed -n` is refused).
 IF A GATE REFUSES: the gate is working. Quote the refusal, name the gate, say what would unblock it.
 Do NOT retry with another tool, search for another tool, or change files to slip past it.

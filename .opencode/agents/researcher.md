@@ -75,5 +75,6 @@ DID: <file you wrote, or "no file">
 BASIS: <files you read, URLs, or screenshots that support this. Never an invented command.>
 BLOCKED: <what stopped you> | <the ONE thing that unblocks it>
 NEXT: <single next action>
+To read lines N-M of a file, use the read tool with offset/limit (a shell `sed -n` is refused).
 IF A GATE REFUSES: the gate is working. Quote the refusal, name the gate, say what would unblock it.
 Do NOT retry with another tool, search for another tool, or change files to slip past it.

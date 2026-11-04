@@ -12,11 +12,11 @@ Anatomy (mini-projects/<slug>/) - gate files appear only when their agent writes
 - DESIGN.md - designer, UI projects: SUMMARY, DIRECTION, TOKENS, COMPONENTS, SCREENS (`- <screen>: design/mockups/<name>.html`),
   ACCESSIBILITY, STACK FIT (`- agree` or `- object: <why>`); mockups are static HTML/CSS in design/mockups/
 - QA.md - qa: SUMMARY, TESTS (`- F<n>: tests/acceptance/<file> - <what it proves>`), RUN (one `- run:` line), VERDICT
-  (PASS | FAIL), REVISIONS; its tests live in tests/acceptance/. VISUAL.md - designer: `VERDICT: MATCH | FIX`, screenshots in design/shots/
+  (PASS | FAIL), REVISIONS; its tests live in tests/acceptance/. VISUAL.md - inspector: `VERDICT: MATCH | MINOR | FIX`, screenshots in design/shots/
 - PLAN.md - planner, ONE milestone: MILESTONE, SCOPE, numbered steps (files, covers, proves on M1 step 1,
-  one backticked `done when` check, risk), ACCEPTANCE, CRITIQUE ANSWERS
+  one backticked `done when` check, risk; UI projects: `design:` names a DESIGN section, SCREENS name or SCREENS mockup), ACCEPTANCE, CRITIQUE ANSWERS
 - CRITIQUE.md - critic, append-only `## ROUND n - M<k>`, points `- C<n> [serious|minor] [target] text - fix: ...`
-- REVIEW.md - reviewer (VERDICT: SHIP | FIX FIRST | REWORK, findings, `## Blind spots`); BUGHUNT.md - /hunt referee
+- REVIEW.md - reviewer (VERDICT: SHIP | FIX FIRST | REWORK, findings, `## Blind spots`); BUGHUNT.md - retired (no agent writes it)
 - AGENTS.md, README.md, NOTES.md, LEARNINGS.md - scaffolded; RESEARCH/ - cited md dumps (untrusted web data)
 - .harness/state.json - brief lock, approval hash, step results, milestones shipped, stage attempts, review freshness.
   Only trusted code writes it (approve.sh, next.py, /ship's template, the safety-gate plugin); agents cannot.

@@ -2,6 +2,26 @@
 
 Format: `## vX.Y - date - one line what changed and why`
 
+## v4.0-piece3 - 2026-11-02 - ship, deploy, publish: save points, /undo, a hardened one-pass reviewer, 11 agents, 13 commands
+Why: after piece 2 the human still committed by hand, there was no way to run or publish what was built, and the hunt had its own two agents. Design: docs/superpowers/specs/2026-11-01-harness-v4-piece3-ship-design.md.
+- Save points: `scripts/checkpoint.py` commits when a result is green (approved documents, red tests, each step, QA PASS, review, `ship M<n>`), each after a stdlib secret scan; `/undo` shelves everything since the last one in a stash; every project must be its own git repo.
+- `/ship` checklist, then `/ship yes` commits, tags `m<n>` and records the milestone in one retry-safe step; the human no longer commits. The plugin's ship gate is removed (the sandbox already refuses agent commits).
+- `/deploy [rollback|stop]` (new `scripts/deploy.py`): `## DEPLOY` in ARCHITECTURE.md, tagged code copied to `~/Projects/opencode-apps/<slug>/releases/`, sandboxed build, LaunchAgent, health check from the new process, rollback on failure, LAN-IP URL. `/publish [yes]`: re-scan unpushed commits, push branch and tags to a private GitHub repo.
+- Reviewer: Opus, two passes (health, bug hunt), evidence ladder PROVEN/TRACED/LEAD, `.review/` probes, required `## Hunt`, regression test before each fix. Hunter, skeptic and `/hunt` removed. Inspector (new, Sonnet) does the VERIFY visual check (MATCH, MINOR, FIX; 2 runs per milestone), moved from the designer.
+- Parallel building cut (one builder per turn; last commit with it `5bb4c0e`).
+- Content-filter fallback (U8): a worker the provider blocks is repeated once on Sonnet 5.5 high; the safety gate refuses every other model override (+19 plugin lines, +5 orchestrator lines).
+- Autopilot off when the loop ends (U9): a turn that ends it with no `/go` sent (failed, interrupted, or its worker failed) also turns autopilot off, so `/status` and `/stop` no longer call it running. A turn with no delegation stops only the project its own `/go` locked, never a loop running in another window (R39) (+9 plugin lines).
+- One project per window (U10): a turn's end continues, stops and unlocks only the project(s) that turn locked or delegated for; a second window's turn can no longer send `/go` for, stop, or unlock a build running in the first (+6 plugin lines).
+- Sandbox: agent shells cannot run `launchctl`/`open`/AppleEvents or read the opencode service password, and strip `*PASS*`/`*AUTH*`/`*KEY*`/`*TOKEN*`/`*SECRET*` variables; read tools check real paths; no session-move/rename or worktree tools; a project's own `.opencode/` is not writable.
+- Weight, measured against piece 3's start `89fa3a7` (`wc -l`): checkpoint.py 0 -> 875, deploy.py 0 -> 594, harness_state.py 1377 -> 1707, next.py 1125 -> 1182, safety-gate.ts 1141 -> 1397,
+  status.py 285 -> 320, harness_docs.py 530 -> 610, agent.sb 70 -> 108, agent-shell 27 -> 50. Production (`scripts/` without tests and bench, `.opencode/`, `mini-projects/_template/`; spec 14):
+  +2789 / -597 lines, net +2192 (git diff 89fa3a7..end of piece 3).
+  Agents, skills and commands: +236 / -348 at Task 15 (removed: hunter 82, skeptic 86, hunt.md 24; added: inspector 86, deploy.md 13, publish.md 12, undo.md 10; reviewer 154 -> 187; skill bug-hunt 83 -> 51 and code-review 87 -> 61, -58 together); orchestrator +5 since (U8).
+  Docs: HANDBOOK 134 -> 166, AGENTS.md 65 -> 66. Tests: state-test 5231 -> 8165 lines, gate-cases 6965 -> 9493.
+- Acceptance (2026-11-03): the git course M1 planned, built, reviewed, shipped, deployed (opened on the user's phone) and published for $9.78 (spec 12.3).
+- Suites: state-test 447, gate-test 395, bench 36 (mirror).
+- 2026-11-04 (Task 19e, user): the `/deploy` app home moved from `~/Projects/opencode-apps` to the workshop's `apps/` (git-ignored; agent shells and write tools still cannot write it, gate cases wapps1-2, xapps1-3).
+
 ## v4.0-piece2-acceptance - 2026-11-01 - Task 15 live run (git course M1, real models, $13.71): 7 defects fixed, orchestrator on Sonnet
 Why: the first real autopilot run found what no unit test could. Record: piece 2 spec §10.3 "Results (Task 15)".
 - D1 the orchestrator ran a chain item's check in the same message as its worker (read the old file): check in the NEXT message; architect,

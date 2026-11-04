@@ -31,7 +31,7 @@
 ; case, seen 2026-10-29, and the per-letter classes keep that true where it does not). Deeper files with these names
 ; (a build's dist/review.md, a package's node_modules/x/DESIGN.md) are plain files. The sandbox matches the resolved
 ; path, so a symlink to the root file is refused too, and so is a hard link (its source is the root file).
-; NOTES.md, LEARNINGS.md and RESEARCH/ stay writable. QA.md (qa) and VISUAL.md (designer) are doc files too.
+; NOTES.md, LEARNINGS.md and RESEARCH/ stay writable. QA.md (qa) and VISUAL.md (inspector) are doc files too.
 ; (gate cases x41-x58)
 (deny file-write*
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Bb][Rr][Ii][Ee][Ff]\.[Mm][Dd]$")
@@ -44,6 +44,22 @@
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Bb][Uu][Gg][Hh][Uu][Nn][Tt]\.[Mm][Dd]$")
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Qq][Aa]\.[Mm][Dd]$")
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Vv][Ii][Ss][Uu][Aa][Ll]\.[Mm][Dd]$"))
+
+; no symlink named AGENTS.md, any letter case, anywhere (R30): after a read, opencode loads every AGENTS.md from the
+; file's folder up into the model's context, following links, OUTSIDE this sandbox (read.ts:82-106), so a link to
+; ~/.config/opencode/service.json would land in the context. AGENTS.md is the only file name opencode 2.2.0 loads that
+; way. A regular AGENTS.md stays writable; so do other links (node_modules/.bin). Covers `ln -s` and `mv x AGENTS.md`.
+; (gate sbx-agents-*)
+(deny file-write-create (require-all (vnode-type SYMLINK) (regex #"/[Aa][Gg][Ee][Nn][Tt][Ss]\.[Mm][Dd]$")))
+
+; a project's own opencode config (R30): opencode loads `.opencode/` (plugins run in the server, outside this
+; sandbox), `opencode.json(c)`, `.claude/` and `.agents/` (skills) from the session's folder and its parents. No
+; session sits in a project today (sessions start at the workshop root; session_move and worktree_* are denied in
+; opencode.json), and nothing legitimate writes these, so no agent shell may: the template's opencode.json is
+; copied by new-project.sh, outside the sandbox. Any letter case. (gate sbx-projcfg-*)
+(deny file-write*
+  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/\.([Oo][Pp][Ee][Nn][Cc][Oo][Dd][Ee]|[Cc][Ll][Aa][Uu][Dd][Ee]|[Aa][Gg][Ee][Nn][Tt][Ss])(/|$)")
+  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Oo][Pp][Ee][Nn][Cc][Oo][Dd][Ee]\.[Jj][Ss][Oo][Nn][Cc]?$"))
 
 ; secrets: .env files (not .env.example), keys, credential stores, opencode's own auth + sessions
 (deny file-read*
@@ -68,3 +84,25 @@
   (literal (string-append (param "HOME") "/.config/git/credentials")))
 (deny process-exec (regex #"/git-credential-osxkeychain$"))
 (deny network-outbound (remote unix-socket (path-regex #"^/private/tmp/com\.apple\.launchd\.[^/]+/Listeners$")))
+
+; launchd (piece 3 spec 7.5): no agent script boots out or kickstarts a deployed app, or submits a job that runs
+; outside this sandbox. A renamed copy is killed by macOS launch constraints (Task 1 fact 11). Templates (/deploy)
+; run outside the sandbox and keep launchctl. (gate sbx-launchctl)
+(deny process-exec (literal "/bin/launchctl"))
+; LaunchServices and Apple Events (R29): `open -a <app>` or an Apple Event (osascript from a script; policies only
+; stop the word) start or drive code OUTSIDE this sandbox. Both refused here; the human's shell keeps them.
+; (gate sbx-lsopen, sbx-appleevent)
+(deny lsopen)
+(deny appleevent-send)
+
+; the opencode service's password (piece 3 spec 7.5, U1): with it an agent could call the service's HTTP API and run a
+; human-only command (/approve, /ship yes, /deploy). Its registration folder ~/.local/state/opencode (service.json, and
+; prompt-history.jsonl: every prompt the human typed) and its config ~/.config/opencode/service*.json (service.json,
+; service-<channel>.json); the folder's other files stay readable. Anchored on HOME, and on STATE / CONFIG
+; (agent-shell: XDG_STATE_HOME / XDG_CONFIG_HOME, else the HOME defaults); last in the file, after every read allow,
+; since the last matching rule wins. The plugin reads these rules for its read-tool check. (gate sbx-svc-*, sbx-xdg-*)
+(deny file-read*
+  (subpath (string-append (param "HOME") "/.local/state/opencode"))
+  (regex (string-append "^" (regex-quote (param "HOME")) "/\\.config/opencode/service[^/]*\\.json$"))
+  (subpath (string-append (param "STATE") "/opencode"))
+  (regex (string-append "^" (regex-quote (param "CONFIG")) "/opencode/service[^/]*\\.json$")))

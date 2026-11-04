@@ -5,8 +5,8 @@
 # - Agent shells (opencode sets AGENT=1 on every shell-tool call) run inside agent.sb:
 #   writes only in the project (HARNESS_SANDBOX_ROOT), temp dirs and tool caches; never
 #   .harness/ or anything under .git (the human commits), and never a doc file at the project root (BRIEF.md,
-#   PLAN.md, ...: their owners write them with the write tools); no reads of .env files, keys or credential stores.
-#   Secret-looking environment variables are removed first.
+#   PLAN.md, ...: their owners write them with the write tools); no reads of .env files, keys or credential stores,
+#   nor the opencode service's password; no launchctl. Secret-looking environment variables are removed first.
 # - Your own `!cmd` in the TUI has no AGENT=1 and runs in your normal shell, unchanged.
 # - Fails closed: if the agent shell cannot be sandboxed, the command does not run.
 real="${HARNESS_REAL_SHELL:-/bin/zsh}"
@@ -17,11 +17,34 @@ if [ -z "$root" ] || [ ! -d "$root" ] || [ ! -x /usr/bin/sandbox-exec ]; then
   echo "HARNESS SANDBOX: cannot sandbox this agent shell (root '$root', /usr/bin/sandbox-exec needed). Refused." >&2
   exit 126
 fi
+# agent.sb's HOME denies match the real path: pass HOME as the kernel spells it. A trailing slash, //, . or a symlink
+# in HOME would make every one of them miss without a sound (Task 10: HOME=/Users/x/ read ~/.ssh and service.json).
+home=""
+if [ -n "${HOME:-}" ]; then home=$(CDPATH= cd -- "$HOME" 2>/dev/null && pwd -P); fi
+if [ -z "$home" ]; then
+  echo "HARNESS SANDBOX: cannot resolve HOME '${HOME:-}'. Refused." >&2
+  exit 126
+fi
 
-for v in $(compgen -e); do
-  case "$v" in
-    *KEY*|*TOKEN*|*SECRET*|*PASSWORD*|*PASSWD*|*CREDENTIAL*|SSH_AUTH_SOCK) unset "$v" ;;
+# opencode keeps its registration and config under XDG_STATE_HOME / XDG_CONFIG_HOME when they are set (R29): the
+# sandbox denies them there too. Real paths as for HOME; a folder that does not exist yet is passed as written.
+xdg() { local d; d=$(CDPATH= cd -- "$1" 2>/dev/null && pwd -P) && printf '%s' "$d" || printf '%s' "$1"; }
+state=$(xdg "${XDG_STATE_HOME:-$home/.local/state}")
+config=$(xdg "${XDG_CONFIG_HOME:-$home/.config}")
+
+# The environment is rebuilt from `env -0`, so names that are not shell names (npm's npm_config_//host/:_authToken,
+# which `compgen -e` never lists) are filtered too. Any letter case (github_token, OpenCode_Password); *PASS* and
+# *AUTH* (R19) also catch PASSWD, SSH_AUTH_SOCK and a password or Basic auth string under any name (and, harmlessly,
+# GIT_AUTHOR_*: agents cannot commit).
+keep=()
+shopt -s nocasematch
+while IFS= read -r -d '' kv; do
+  case "${kv%%=*}" in
+    *KEY*|*TOKEN*|*SECRET*|*PASS*|*AUTH*|*CREDENTIAL*) ;;
+    *) keep+=("$kv") ;;
   esac
-done
+done < <(/usr/bin/env -0)
+shopt -u nocasematch
 
-exec /usr/bin/sandbox-exec -f "$(dirname "${BASH_SOURCE[0]}")/agent.sb" -D ROOT="$root" -D HOME="$HOME" "$real" "$@"
+exec /usr/bin/env -i "${keep[@]}" /usr/bin/sandbox-exec -f "$(dirname "${BASH_SOURCE[0]}")/agent.sb" \
+  -D ROOT="$root" -D HOME="$home" -D STATE="$state" -D CONFIG="$config" "$real" "$@"

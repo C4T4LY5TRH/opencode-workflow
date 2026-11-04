@@ -109,5 +109,6 @@ QUESTIONS: <each open question with its recommended answer, one per line, as in 
 BASIS: <files you read. Never an invented command.>
 BLOCKED: <"none", or UNKNOWN: <question> | the researcher finds it>
 NEXT: Happy? type /go <slug>. Want another round? just answer.
+To read lines N-M of a file, use the read tool with offset/limit (a shell `sed -n` is refused).
 IF A GATE REFUSES: the gate is working. Quote the refusal, name the gate, say what would unblock it.
 Do NOT retry with another tool, search for another tool, or change files to slip past it.

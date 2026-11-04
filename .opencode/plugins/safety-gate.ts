@@ -3,17 +3,16 @@
  *
  * This is the SECOND layer. The FIRST is `policies` + per-agent permission rules in opencode.json (a policy `deny`
  * beats agent rules AND saved approvals; docs/audit/research/L0-config.md). This plugin adds what that layer cannot say:
- *   - ship gate: no AGENT commit or tag (matched anywhere in a command chain) unless the recorded review says SHIP and
- *     the code still hashes as it did then. The human's commit is not seen here (/ship's status line checks it), and
- *     agent.sb denies every agent write under .git anyway (R25 keeps this)
  *   - plan gate: no code write in a mini project unless the human approved its current documents; the state library
  *     decides (`harness_state.py approved`, spec H1/H24) and any edit revokes it. Approval is human-only: agents
  *     cannot write .harness/ or run approve.sh
  *   - write confinement: no write outside the session's project; the write tools, in EVERY session, only inside an
  *     existing mini-projects/<slug>/ or the workshop RESEARCH/, checked on the real path
- *   - write scope: a builder child writes only its step's files; qa and the designer only their own
+ *   - write scope: a builder child writes only its step's files; qa, the designer and the inspector only their own
  *   - recording (execute.after, piece 2 spec 6.3): step checks, the acceptance run and the REVIEW/QA/VISUAL verdicts
  *     go into .harness/state.json through one write queue
+ *   - save points (piece 3 spec 4.1): after a recorded green event, scripts/checkpoint.py scans and commits that
+ *     event's files in the project's own repo (checkpointAfter); a blocked one stops the next /go (next.py)
  *   - delegations (spec 7.2 rules 7-8): a circuit breaker per turn, at most 3 open, never in the background; a
  *     delegating turn's end frees the /go locks, and its tool calls keep its project's lock fresh (turns: spec 14 f)
  *   - the autopilot loop (piece 2 spec 3.2): the plugin sends /go <slug> and nothing else, ever
@@ -57,8 +56,12 @@ const WRITE_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
 const DELEGATION_TOOL = "subagent"
 /** Delegations one session may make in one human turn (spec 7.2 rule 7, H23). */
 const BREAKER_CAP = 16
-/** Delegations one session may have open at once (piece 2 spec 6.3: one builder per ready step, up to 3). */
-const MAX_OPEN = 3
+/** Delegations one session may have open at once (one delegation at a time: piece 3 spec §9, P1). */
+const MAX_OPEN = 1
+/** The one model a delegation may name: a retry of a worker the provider's content filter blocked (U8, R38). */
+const CONTENT_FILTER_FALLBACK = "anthropic/claude-sonnet-5-5#high"
+/** Only the host's own failure form: other tool errors echo the caller's input (opencode runtime.ts:88-100). */
+const CONTENT_FILTERED = /^Subagent failed \(sessionID: [^)\n]*\): Provider blocked the response/
 const TURN_START = "session.execution.started"
 const TURN_OK = "session.execution.succeeded"
 const TURN_END = new Set([TURN_OK, "session.execution.failed", "session.execution.interrupted"])
@@ -150,6 +153,79 @@ const stateFile = (proj: string) => path.join(proj, ".harness", "state.json")
 const isObj = (v: any) => Boolean(v) && typeof v === "object" && !Array.isArray(v)
 const isStr = (v: any): v is string => typeof v === "string"
 const stepsOf = (st: any): any[] => (Array.isArray(st?.steps) ? st.steps.filter(isObj) : [])
+
+/** The server-side tools that read a path the agent names. They run in opencode, OUTSIDE agent.sb. */
+const READ_TOOLS = new Set(["read", "grep", "glob", "list"])
+/** The one instruction file opencode 2.2.0 loads by name (read.ts:16 after a read; instruction.ts:41-87 at start). */
+const INSTRUCTION_FILE = "AGENTS.md"
+type ReadRule = { deny: boolean; test: (p: string, params: Record<string, string>) => boolean }
+/** agent.sb's file-read* rules in file order (SBPL: the last match wins), so the read check and the sandbox share one
+ *  list. Knows the matchers agent.sb uses (subpath/literal of a param + string, regex, a param-anchored regex);
+ *  anything else throws, and every read-tool call is then refused (fail closed). Matches ignore case, as the
+ *  sandbox does on this Mac. */
+function sandboxReadRules(text: string): ReadRule[] {
+  const src = text.split("\n").filter((l) => !l.trim().startsWith(";")).join("\n")
+  const lc = (s: string) => s.toLowerCase()
+  const unq = (s: string) => s.replace(/\\(.)/g, "$1") // an SBPL string's escapes ("\\." is \.)
+  const reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") // regex-quote
+  const P = String.raw`\(param "([A-Z_]+)"\)`, S = String.raw`"((?:[^"\\]|\\.)*)"`
+  const forms: [RegExp, (g: string[]) => ReadRule["test"]][] = [
+    [new RegExp(String.raw`\(subpath \(string-append ${P} ${S}\)\)`, "g"),
+      ([k, s]) => (p, v) => k in v && (lc(p) === lc(v[k] + unq(s)) || lc(p).startsWith(lc(v[k] + unq(s)) + "/"))],
+    [new RegExp(String.raw`\(literal \(string-append ${P} ${S}\)\)`, "g"), ([k, s]) => (p, v) => k in v && lc(p) === lc(v[k] + unq(s))],
+    [/\(regex #"((?:[^"\\]|\\.)*)"\)/g, ([r]) => { const re = new RegExp(r, "i"); return (p) => re.test(p) }],
+    [new RegExp(String.raw`\(regex \(string-append "\^" \(regex-quote ${P}\) ${S}\)\)`, "g"),
+      ([k, r]) => (p, v) => k in v && new RegExp("^" + reEsc(v[k]) + unq(r), "i").test(p)],
+  ]
+  const rules: ReadRule[] = []
+  for (const m of src.matchAll(/\((deny|allow) file-read\*/g)) {
+    let depth = 1, i = m.index! + m[0].length, str = false
+    for (; i < src.length && depth > 0; i++) { // to the form's closing paren, skipping strings
+      const c = src[i]
+      if (str) { if (c === "\\") i++; else if (c === '"') str = false }
+      else if (c === '"') str = true
+      else if (c === "(") depth++
+      else if (c === ")") depth--
+    }
+    let body = src.slice(m.index! + m[0].length, i - 1)
+    for (const [re, make] of forms) {
+      body = body.replace(re, (_all, ...g) => { rules.push({ deny: m[1] === "deny", test: make(g.slice(0, 2)) }); return "" })
+    }
+    if (body.trim()) throw new Error(`unknown file-read* matcher: ${body.trim().slice(0, 60)}`)
+  }
+  if (!rules.length) throw new Error("no file-read* rules")
+  return rules
+}
+let READ_RULES: ReadRule[] | null = null
+let READ_RULES_ERR = ""
+try {
+  READ_RULES = sandboxReadRules(readFileSync(path.join(WORKSHOP, "scripts", "sandbox", "agent.sb"), "utf8"))
+} catch (e) {
+  READ_RULES_ERR = String((e as Error)?.message ?? e)
+}
+/** agent.sb's params as agent-shell passes them: HOME as `pwd -P` gives it, STATE / CONFIG from XDG_STATE_HOME /
+ *  XDG_CONFIG_HOME or the HOME defaults (real when they exist, else as written). */
+const sandboxParams = (): Record<string, string> => {
+  const v: Record<string, string> = {}
+  const realOr = (p: string) => {
+    try {
+      return realpathSync.native(p)
+    } catch {
+      return p
+    }
+  }
+  try {
+    if (process.env.HOME) v.HOME = realpathSync.native(process.env.HOME)
+  } catch {
+    // no home: its rules cannot match (the workshop check still holds)
+  }
+  const st = process.env.XDG_STATE_HOME || (v.HOME && path.join(v.HOME, ".local", "state"))
+  const cf = process.env.XDG_CONFIG_HOME || (v.HOME && path.join(v.HOME, ".config"))
+  if (st) v.STATE = realOr(st)
+  if (cf) v.CONFIG = realOr(cf)
+  return v
+}
+
 /** The milestone of the recorded (approved) steps: qa, verify and visual are recorded with it (T7-R8). */
 const msOf = (st: any): string | undefined => {
   const m = stepsOf(st)[0]?.milestone
@@ -198,7 +274,102 @@ function queueWrite(proj: string, mutate: (state: any) => boolean | void): Promi
   return safe
 }
 
+/** Save points (piece 3 spec 4.1, 4.2): scripts/checkpoint.py scans and commits the files of one green event in the
+ *  project's own repo, outside the agent sandbox (spec 11.1 fact 2; its child has neither AGENT nor
+ *  OPENCODE_SESSION_ID, fact 12a). It never writes state: its one JSON result is recorded here through queueWrite.
+ *  COMMIT_HOOK = "execute.after" (fact 1): the hook is awaited, so the save point is made before the agent's next
+ *  model step. Not before a SIBLING call of the same model message: opencode starts each call as it streams in and
+ *  joins them only when the message ends (core/src/session/runner/step.ts:120-131, :145), so when a call's
+ *  execute.after runs, a later sibling may not even have reached execute.before yet; no hook says "this message's
+ *  calls are done" before the next step. Ruling R5: documented, not closed (spec 4.1): a write sent in the same message
+ *  as a passing check can land in that check's save point when it touches the event's own files. Bounded: such a
+ *  write passes the same scope gate (a step's builder writes only its step's files), checkpoint.py scans exactly the
+ *  index it commits, the builder is told to run its check last and nothing after it, and VERIFY re-runs every check
+ *  on the final tree before the QA PASS save point. */
+const CHECKPOINT_PY = path.join(SCRIPTS, "checkpoint.py")
+const SCAN_NOTES_KEPT = 20 // = checkpoint.SCAN_NOTES_KEPT (state.scan_notes keeps the newest)
+/** The plugin's cap on one save point. checkpoint.py's own 300 s limits are per git call (about 20 calls a run), so
+ *  they do not bound a run: at this cap the plugin ends python AND its git child (see runCheckpoint). */
+const CHECKPOINT_TIMEOUT_MS = 300_000
+
+/** One save point at a time, in any project (two `git add`/`commit` in one repo would fight over its index lock). */
+let commitChain: Promise<unknown> = Promise.resolve()
+function runCheckpoint(proj: string, event: any): Promise<any> {
+  const job = commitChain.then(() => new Promise<any>((resolve) => {
+    const failed = (why: string) => resolve({ ok: false, sha: null, event, message: why, notes: [],
+      block: { event, file: null, line: null, rule: "checkpoint", message: `the save point could not run (${why}); /go retries it` } })
+    try {
+      // detached: python leads its own process group, and its git children are in it. A timeout that killed python
+      // alone (execFile's) would orphan a running `git add`/`commit` that keeps index.lock; SIGTERM to the whole
+      // group ends both, and git removes its lock files on SIGTERM (a SIGKILL would leave index.lock behind).
+      // spawn, not execFile: execFile passes only a fixed list of options to spawn and drops `detached` (seen on
+      // node 24: the child stayed in the plugin's own process group)
+      let timedOut = false
+      let out = ""
+      let err = ""
+      const child = spawn("python3", [CHECKPOINT_PY, "commit", proj, JSON.stringify(event)],
+        { detached: true, stdio: ["ignore", "pipe", "pipe"] })
+      const timer = setTimeout(() => {
+        timedOut = true
+        try {
+          if (child.pid) process.kill(-child.pid, "SIGTERM")
+        } catch {
+          // the group is already gone
+        }
+      }, CHECKPOINT_TIMEOUT_MS)
+      child.stdout?.on("data", (d) => { if (out.length < 16 * 1024 * 1024) out += String(d) })
+      child.stderr?.on("data", (d) => { if (err.length < 64 * 1024) err += String(d) })
+      child.on("error", (e) => { // python3 missing: no close follows a failed spawn
+        clearTimeout(timer)
+        failed(String(e?.message ?? e))
+      })
+      child.on("close", (code, signal) => {
+        clearTimeout(timer)
+        if (timedOut) return failed(`timed out after ${CHECKPOINT_TIMEOUT_MS / 1000} s`)
+        if (code !== 0) return failed(err.trim().split("\n").pop() || `exit ${code ?? signal}`)
+        try {
+          const res = JSON.parse(out.trim())
+          if (isObj(res) && typeof res.ok === "boolean") return resolve(res)
+        } catch {
+          // not JSON: reported below
+        }
+        failed("no result")
+      })
+    } catch (e) {
+      failed(String((e as any)?.message ?? e))
+    }
+  }))
+  commitChain = job.catch(() => {})
+  return job
+}
+
 const nowIso = () => new Date().toISOString().replace(/\.\d+Z$/, "Z")
+
+/** After a green event's record was written: its save point, and the result into state (harness_state.apply_checkpoint
+ *  says the same in Python). A save point -> state.checkpoint {sha, event, at}; nothing staged -> the last one stays;
+ *  a block -> state.checkpoint_block, unless one is already set (the earliest unsaved event is the one /go retries;
+ *  only that retry clears it). The record itself stands either way (a step stays done): next.py stops at the next
+ *  /go until the save point is made. */
+async function checkpointAfter(proj: string, event: any) {
+  const res = await runCheckpoint(proj, event)
+  const notes = (Array.isArray(res.notes) ? res.notes : []).filter(isObj).map((n: any) => `${n.file}:${n.line}:${n.rule}`)
+  const label = event.kind === "step" ? `step ${event.n}` : String(res.message ?? event.kind)
+  await queueWrite(proj, (st) => {
+    let changed = false
+    if (res.ok && isStr(res.sha) && res.sha) {
+      st.checkpoint = { sha: res.sha, event: label, at: nowIso() }
+      changed = true
+    } else if (!res.ok && !isObj(st.checkpoint_block)) {
+      st.checkpoint_block = isObj(res.block) ? res.block : { event, file: null, line: null, rule: "checkpoint", message: String(res.message || "the save point failed") }
+      changed = true
+    }
+    if (notes.length) {
+      st.scan_notes = [...(Array.isArray(st.scan_notes) ? st.scan_notes.filter(isStr) : []), ...notes].slice(-SCAN_NOTES_KEPT)
+      changed = true
+    }
+    return changed
+  })
+}
 const normCmd = (cmd: string) => cmd.trim().replace(/\s+/g, " ")
 const lastLines = (text: string, n: number) => text.replace(/\r\n/g, "\n").replace(/\n+$/, "").split("\n").slice(-n).join("\n")
 
@@ -239,20 +410,6 @@ function parseTitle(title: string): { slug: string; kind: string; n: number | nu
   const m = TITLE_RE.exec(title.trim())
   if (!m) return null
   return { slug: m[1], kind: m[2] ? m[2].split(" ")[0] : m[4], n: m[3] ? Number(m[3]) : null }
-}
-
-/** git subcommands that create a commit/tag and so must pass the ship gate. */
-const COMMIT_VERBS = "commit|tag|merge|cherry-pick|revert|rebase|am"
-
-/** Match a commit-creating git command anywhere in a chain (fixes the &&/-C/env-prefix/subshell bypass). */
-function isCommitOrTag(cmd: string): boolean {
-  for (let seg of cmd.split(/[;&|]+|\n/)) {
-    seg = seg.trim().replace(/^[("'\s]+/, "") // strip leading ( " ' and space (subshells)
-    seg = seg.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, "") // strip leading ENV=val
-    if (new RegExp(`^(?:/\\S+/)?git\\s+(?:-[A-Za-z]\\S*\\s+\\S+\\s+|--\\S+\\s+)*(?:${COMMIT_VERBS})\\b`).test(seg))
-      return true
-  }
-  return false
 }
 
 /** Every path a write-tool call writes: its one path, or each path named in an apply-patch blob. */
@@ -425,6 +582,64 @@ export default {
       return path.join(ws, path.relative(top, target))
     }
 
+    /**
+     * read/grep/glob run in the server, outside agent.sb, and opencode checks their path as text (file-access.ts
+     * resolve: no realpath): a link an agent shell made in its project (`ln -s ~/.ssh k`) would be read through it.
+     * So the REAL path (a missing path: its nearest existing parent's) must stay in the workshop and pass agent.sb's
+     * own read rules (READ_RULES: .env, keys, the opencode service password). Links inside the project stay usable.
+     */
+    const checkRead = (input: any) => {
+      const raw = isStr(input?.path) ? input.path : isStr(input?.filePath) ? input.filePath : "."
+      const refuse = (why: string) => {
+        throw new Error(`SAFETY GATE: read. ${raw} ${why}. Read files inside the workshop only, not through a link.`)
+      }
+      if (!READ_RULES) refuse(`cannot be checked (agent.sb read rules: ${READ_RULES_ERR})`)
+      const target = raw === "~" ? process.env.HOME || "/" : resolveTarget(raw || ".")
+      let anc = target
+      while (!lst(anc) && path.dirname(anc) !== anc) anc = path.dirname(anc)
+      let realPath = ""
+      let ws = ""
+      try {
+        realPath = path.join(real(anc), path.relative(anc, target))
+        ws = real(miniRoot ? path.dirname(miniRoot) : WORKSHOP)
+      } catch {
+        refuse("cannot be resolved (a broken link?)")
+      }
+      const params = sandboxParams()
+      const allowed = (p: string) => {
+        if (p !== ws && !inside(ws, p)) return `resolves to ${p}, outside the workshop`
+        let denied = false
+        for (const r of READ_RULES!) if (r.test(p, params)) denied = r.deny
+        return denied ? `resolves to ${p}, which the sandbox keeps from agents` : ""
+      }
+      const why = allowed(realPath)
+      if (why) refuse(why)
+      // After a read, opencode loads every AGENTS.md from the file's folder up to the session folder into the model's
+      // context, following links (read.ts:82-106, fs-util.ts:83-108): R30. Each one must pass the same check. agent.sb
+      // refuses an agent shell's link named AGENTS.md; this covers one made another way (or before that rule).
+      let session = ""
+      try {
+        session = real(SESSION_DIR)
+      } catch {
+        session = ws
+      }
+      let dir = lst(realPath)?.isDirectory() ? realPath : path.dirname(realPath)
+      for (let i = 0; i < 64 && (dir === ws || inside(ws, dir)) && !(dir === session || inside(dir, session)); i++) {
+        const file = path.join(dir, INSTRUCTION_FILE)
+        if (lst(file)) {
+          let fileReal = ""
+          try {
+            fileReal = real(file)
+          } catch {
+            refuse(`would load ${file}, a broken link`)
+          }
+          const bad = allowed(fileReal)
+          if (bad) refuse(`would load ${file} into the context, which ${bad}`)
+        }
+        dir = path.dirname(dir)
+      }
+    }
+
     /** Write tools, every agent, every session dir: only an existing mini project (not _template) or the workshop RESEARCH/. */
     const confine = (realTgt: string) => {
       const ws = real(path.dirname(miniRoot as string))
@@ -549,11 +764,11 @@ export default {
       }
     }
 
-    /** Throws unless this builder, qa or designer may write `target` in `proj` (spec 4, 6.3); other agents: the gates
-     *  above only. The batch next.py issued caps every tie, because a title is written by a model. */
+    /** Throws unless this builder, qa, designer or inspector may write `target` in `proj` (spec 4, 6.3); other agents: the gates
+     *  above only. The turn next.py issued caps every tie, because a title is written by a model. */
     const checkScope = async (event: any, target: string, proj: string) => {
       const agent = String(event?.agent ?? "")
-      if (agent !== "builder" && agent !== "qa" && agent !== "designer") return
+      if (agent !== "builder" && agent !== "qa" && agent !== "designer" && agent !== "inspector") return
       const rel = path.relative(proj, target).split(path.sep).join("/") + (target.endsWith(path.sep) ? "/" : "")
       const fits = (allowed: string[]) => allowed.some((a) => pathsOverlap(rel, a))
       const refuse = (why: string) => {
@@ -564,9 +779,14 @@ export default {
         if (!fits(qa)) refuse(`qa may write only: ${qa.join(", ")}.`)
         return
       }
-      if (agent === "designer") {
-        const own = (await planApproved(proj)) ? ["VISUAL.md", "design/shots/"] : ["DESIGN.md", "design/mockups/"]
-        if (!fits(own)) refuse(`The designer may write only: ${own.join(", ")}.`)
+      if (agent === "inspector") {
+        const own = ["VISUAL.md", "design/shots/"]
+        if (!fits(own)) refuse(`The inspector may write only: ${own.join(", ")}.`)
+        return
+      }
+      if (agent === "designer") { // DESIGN.md and the mockups, before approval only (the plan cites them)
+        const own = ["DESIGN.md", "design/mockups/"]
+        if ((await planApproved(proj)) || !fits(own)) refuse("The designer may write only DESIGN.md and design/mockups/, and only before /approve.")
         return
       }
       const slug = path.basename(proj)
@@ -585,15 +805,20 @@ export default {
         return
       }
       if (tie?.kind === "fix" && (!snap || snap.kind === "FIX" || snap.stage === "FIX")) {
+        // spec 6: the step files, plus its regression tests under tests/, never QA's tests/acceptance/ (next.py's
+        // _turn_scope says the same after the turn)
         const files = filesOf(steps)
-        if (!fits(files)) refuse(`A fix round may write only the milestone's step files: ${files.join(", ") || "(none)"}.`)
+        const acceptance = (p: string) => { const n = normPath(p); return n === "tests/acceptance" || n.startsWith("tests/acceptance/") }
+        if (!fits([...files, "tests/"]) || acceptance(rel)) {
+          refuse(`A fix round may write only the milestone's step files (${files.join(", ") || "none"}) and its regression tests under tests/, never tests/acceptance/.`)
+        }
         return
       }
-      // untied, or tied outside the batch: the batch's step files and their requests, never its test, QA or
+      // untied, or tied outside the turn: the turn's step files and their requests, never its test, QA or
       // research paths; no snapshot, nothing (Review Focus 3)
-      if (!snap) refuse(`This builder is not tied to a step and ${slug} has no batch snapshot, so it may write nothing. The human runs /go ${slug}.`)
+      if (!snap) refuse(`This builder is not tied to a step and ${slug} has no turn snapshot, so it may write nothing. The human runs /go ${slug}.`)
       const allowed = [...filesOf(steps.filter((s: any) => snap!.steps.includes(s.n))), ...snap!.steps.map((n) => `requests/step${n}.md`)]
-      if (!fits(allowed)) refuse(`This builder is not tied to a step; it may write only this batch's files: ${allowed.join(", ") || "(none)"}.`)
+      if (!fits(allowed)) refuse(`This builder is not tied to a step; it may write only this turn's files: ${allowed.join(", ") || "(none)"}.`)
     }
 
     // Delegations per CALLING session. `turnCalls`: this turn's agents (the breaker). `running`: open calls by call
@@ -610,6 +835,7 @@ export default {
     }
     const bgChild = new Map<string, { parent: string; call: string }>()
     const delegated = new Set<string>()
+    const filtered = new Set<string>() // "<session> <agent>": that agent's last delegation there was content-filtered
     const turnSeen = new Map<string, number>() // session -> when this plugin saw its turn start (Review Focus 3: no /go otherwise)
     let anon = 0
 
@@ -660,11 +886,18 @@ export default {
         // a continued child keeps its old title and fires no session.created, so its step tie would be stale
         throw new Error("SAFETY GATE: start a new delegation; continuing an earlier one is not allowed.")
       }
+      const model = event?.input?.model
+      const fallback = model !== undefined && model !== ""
+      if (fallback && !(model === CONTENT_FILTER_FALLBACK && filtered.has(`${sid} ${agent}`))) {
+        throw new Error(
+          `SAFETY GATE: model override. A delegation may name a model only to repeat a worker the provider's content filter just blocked, once, with ${CONTENT_FILTER_FALLBACK}. The human switches models in opencode.json (agent.<name>.model).`,
+        )
+      }
       const calls = turnCalls.get(sid) ?? []
       turnCalls.set(sid, calls)
       const open = running.get(sid) ?? new Map()
       if (open.size >= MAX_OPEN) {
-        throw new Error(`SAFETY GATE: at most ${MAX_OPEN} delegations at once. Wait for one to finish.`)
+        throw new Error("SAFETY GATE: one delegation at a time. Wait for it to finish.")
       }
       if (calls.length >= BREAKER_CAP) {
         const counts = new Map<string, number>()
@@ -675,6 +908,7 @@ export default {
         )
       }
       calls.push(agent)
+      if (fallback) filtered.delete(`${sid} ${agent}`) // one fallback per block
       open.set(isStr(event?.id) && event.id ? event.id : `anon-${++anon}`, { agent, bg: null }) // no id: held to the turn end
       running.set(sid, open)
       const named = /^([a-z0-9-][a-z0-9_-]*):\s/.exec(String(event?.input?.description ?? ""))
@@ -703,6 +937,12 @@ export default {
       const meta = event?.result?.metadata
       const child = String((isObj(out) && out.sessionID) || meta?.sessionID || "")
       const status = (isObj(out) && out.status) || meta?.status
+      const agent = typeof event?.input?.agent === "string" && event.input.agent ? event.input.agent : "unknown"
+      const err = event?.error
+      const blocked = event?.status === "error" && !event?.input?.model && // a blocked fallback gets no second one
+        CONTENT_FILTERED.test(isStr(err) ? err : String(err?.message ?? ""))
+      if (blocked) filtered.add(`${sid} ${agent}`)
+      else filtered.delete(`${sid} ${agent}`)
       if (event?.status === "completed" && turnCalls.has(sid)) delegated.add(sid) // it really delegated
       if (event?.status === "completed" && status === "running" && child && open?.has(id)) {
         open.get(id)!.bg = child // the child still runs: its slot and the lock stay until its turn ends
@@ -730,15 +970,17 @@ export default {
         // it cannot be removed: next.py's 30-minute expiry is the fallback
       }
     }
-    const clearLocks = () => lockedProjects().forEach(unlinkLock)
     /** Was this lock taken by the turn of `sid` that started at `startedAt`? Yes when this instance refreshed it during
-     *  that turn (`refreshedFor`: the turn's first builder ran, then Esc). Otherwise next.py's lock records no session,
-     *  only `at` (whole seconds), written by the /go template just before the turn starts: so `at` within the minute
-     *  before the start (or the second after). Either way no other open turn of this instance may delegate for that
-     *  project. A lock refreshed for another root carries a later `at` and another `refreshedFor`. Unreadable: not ours. */
+     *  that turn (`refreshedFor`: the turn's first builder ran, then Esc), or the turn's delegations name the project
+     *  (`proj`). Otherwise next.py's lock records no session, only `at` (whole seconds), written by the /go template
+     *  just before the turn starts: so `at` within the minute before the start (or the second after); a start this
+     *  plugin never saw (a restart) proves nothing. Either way no other open turn of this instance may delegate for
+     *  that project. A lock refreshed for another root carries a later `at` and another `refreshedFor`. Unreadable:
+     *  not ours. */
     const LOCK_LEAD_MS = 60_000
-    const lockTakenBy = (dir: string, sid: string, startedAt: number) => {
-      if (refreshedFor.get(dir) !== sid) { // refreshed by this root's own turn (its first builder ran): ours, any `at`
+    const lockTakenBy = (dir: string, sid: string, startedAt: number | undefined, proj?: string) => {
+      if (refreshedFor.get(dir) !== sid && !(proj && samePath(proj, dir))) { // this root's own turn kept or named it
+        if (startedAt === undefined) return false
         try {
           const at = Date.parse(JSON.parse(readFileSync(path.join(dir, ".harness", "lock"), "utf8"))?.at)
           if (!Number.isFinite(at) || at < startedAt - LOCK_LEAD_MS || at > startedAt + 1000) return false
@@ -761,18 +1003,24 @@ export default {
     }
 
     /** The autopilot loop (spec 3.2), on a root's turn end, before the locks are freed. The plugin may only ever send
-     *  /go <slug>: into the session whose turn ended, for the ONE locked project whose autopilot is on with `continue`
+     *  /go <slug>: into the session whose turn ended, for the ONE project it locked whose autopilot is on with `continue`
      *  (next.py sets it on each turn it issues; it is cleared here first, so one turn continues once). A failed or
-     *  interrupted turn ends the loop; two candidates send nothing (Review Focus 2). */
+     *  interrupted turn, or one with no completed delegation (run B: its worker was blocked; below, its own project
+     *  only), ends the loop and turns autopilot off (U9), so /status and /stop never call it running; two candidates
+     *  send nothing (Review Focus 2). */
     const isGoing = (st: any) => isObj(st?.autopilot) && st.autopilot.on === true && st.autopilot.continue === true
     const endLoop = (st: any) => {
       if (!isGoing(st)) return false
       st.autopilot.continue = false
     }
-    const continueLoop = (sid: string, ok: boolean) => {
-      const going = lockedProjects().filter((dir) => isGoing(readState(dir)))
+    const stopLoop = (st: any) => {
+      if (endLoop(st) === false) return false
+      st.autopilot.on = false
+    }
+    const continueLoop = (sid: string, ok: boolean, own: string[]) => {
+      const going = own.filter((dir) => isGoing(readState(dir)))
       if (!ok) {
-        for (const dir of going) void queueWrite(dir, endLoop)
+        for (const dir of going) void queueWrite(dir, stopLoop)
         return
       }
       const slugs = going.map((dir) => path.basename(dir))
@@ -789,7 +1037,8 @@ export default {
     }
 
     /** Turn and session events (spec 14 f): reset a session's count at its turn start; at a delegating turn's end run
-     *  the loop, then free the /go locks (P7). Also cost events and the session tree. */
+     *  the loop, then free the /go locks that turn took (P7; U10: never another window's). Also cost events and the
+     *  session tree. */
     const onTurnEvent = (e: any) => {
       if (e?.type === "session.created") {
         const sid = e.data?.sessionID
@@ -809,12 +1058,15 @@ export default {
       const seen = ended && turnSeen.delete(sid)
       if (ended || e.type === TURN_START) unbilled.delete(sid)
       if (seen && !delegated.has(sid)) {
-        // a root turn of this instance that completed no delegation (a model error, Esc while the first builder runs)
-        // ends the loop, so a later turn cannot resume it, and frees the lock its own /go took (lockTakenBy)
+        // a root turn of this instance that completed no delegation (a model error, Esc while the first builder runs,
+        // run B's blocked worker) ends the loop of the project its own /go locked (lockTakenBy), so a later turn cannot
+        // resume it, and frees that lock; never another session's (R39: /status typed in a second window)
         void ownRoot(sid).then((own) => {
           if (!own) return
-          continueLoop(sid, false)
-          for (const dir of lockedProjects()) if (lockTakenBy(dir, sid, startedAt!)) unlinkLock(dir)
+          for (const dir of lockedProjects().filter((d) => lockTakenBy(d, sid, startedAt!))) {
+            void queueWrite(dir, stopLoop)
+            unlinkLock(dir)
+          }
         })
       }
       const bg = ended ? bgChild.get(sid) : undefined
@@ -834,10 +1086,13 @@ export default {
           return
         }
         turnCalls.delete(sid)
+        const proj = rootProj.get(sid)
         rootProj.delete(sid)
         if (delegated.delete(sid)) {
-          if (seen) continueLoop(sid, e.type === TURN_OK) // never for a turn whose start this plugin did not see
-          clearLocks()
+          // only the locks this turn took (U10): another window's running project keeps its lock and loop
+          const own = lockedProjects().filter((d) => lockTakenBy(d, sid, startedAt, proj))
+          if (seen) continueLoop(sid, e.type === TURN_OK, own) // never for a turn whose start this plugin did not see
+          own.forEach(unlinkLock)
         }
       }
     }
@@ -894,20 +1149,29 @@ export default {
     })
 
     /** The browser (spec 9.3 fact 6, ruling C5+). The Playwright MCP writes outside the agent sandbox and resolves a
-     *  relative filename against the WORKSHOP (its cwd), so only the designer saves a file, a screenshot into its own
+     *  relative filename against the WORKSHOP (its cwd), so only the inspector saves a file, a screenshot into its own
      *  project's design/shots/, and it opens only http://127.0.0.1|localhost:<its project's port>. Other agents browse
-     *  as their permissions allow and take screenshots inline only. */
+     *  as their permissions allow, http(s) pages only (the browser also reads files outside the sandbox), and take
+     *  screenshots inline only. */
     const checkBrowser = async (event: any, tool: string) => {
       const input = event?.input
       const file = isStr(input?.filename) ? input.filename : "" // raw, as the MCP uses it: " " is a file named " "
-      const designer = event?.agent === "designer"
-      if (file && !(designer && tool === MCP_SHOT_TOOL)) {
-        throw new Error("SAFETY GATE: browser file. Only the designer saves a browser file (a screenshot, into its project's design/shots/). Take it without a filename.")
+      const inspector = event?.agent === "inspector"
+      if (file && !(inspector && tool === MCP_SHOT_TOOL)) {
+        throw new Error("SAFETY GATE: browser file. Only the inspector saves a browser file (a screenshot, into its project's design/shots/). Take it without a filename.")
       }
       const opens = tool === MCP_NAV_TOOL || (isObj(input) && "url" in input) // navigate, browser_tabs new, ...
-      if (!designer || (!opens && !file)) return
+      // every other agent: web pages only. The MCP blocks file: itself but not view-source:file:///… (Task 10 probe: a
+      // snapshot then shows any file, the service password too). A string the MCP cannot parse gets https:// in front.
+      if (opens && !inspector) {
+        const raw = input?.url
+        if (!isStr(raw) || (URL.canParse(raw) && !["http:", "https:"].includes(new URL(raw).protocol))) {
+          throw new Error("SAFETY GATE: browser URL. Only http:// and https:// pages; file:, view-source: and other schemes are refused.")
+        }
+      }
+      if (!inspector || (!opens && !file)) return
       const sid = String(event?.sessionID ?? "")
-      await tieOf(sid) // the designer child's title `<slug>: visual` names its project
+      await tieOf(sid) // the inspector child's title `<slug>: visual` names its project
       const proj = lockProject(sid) ?? sessionProject()
       const port = proj ? readState(proj)?.port : undefined
       if (opens) {
@@ -918,7 +1182,7 @@ export default {
           // not a URL: refused below
         }
         if (!url || url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname) || !Number.isInteger(port) || url.port !== String(port)) {
-          throw new Error(`SAFETY GATE: designer browser. Only http://127.0.0.1:${Number.isInteger(port) ? port : "<port>"} of this project.`)
+          throw new Error(`SAFETY GATE: inspector browser. Only http://127.0.0.1:${Number.isInteger(port) ? port : "<port>"} of this project.`)
         }
       }
       if (!file) return
@@ -929,7 +1193,7 @@ export default {
         // no project, outside the workshop, or through a link: refused below
       }
       if (!inShots) {
-        throw new Error(`SAFETY GATE: designer browser. Screenshots go only into mini-projects/${proj ? path.basename(proj) : "<slug>"}/design/shots/.`)
+        throw new Error(`SAFETY GATE: inspector browser. Screenshots go only into mini-projects/${proj ? path.basename(proj) : "<slug>"}/design/shots/.`)
       }
     }
 
@@ -940,41 +1204,18 @@ export default {
 
       if (tool === DELEGATION_TOOL) return checkDelegation(event)
       if (tool.startsWith(MCP_PREFIX)) return await checkBrowser(event, tool)
+      if (READ_TOOLS.has(tool)) return checkRead(input)
+      // opencode's own tools (ids opencode_<name>). opencode.json denies, and so hides, all but worktree_remove: a session
+      // moved into a project would load its .opencode/ plugins and config (R30); a retitled child loses or changes its
+      // project tie once the plugin reloads (tieOf reads titles; R31); MCP resources bypass the read check (R31).
+      // worktree_remove declares `permission: "edit"`, so no opencode.json key hides it: THIS refusal is its only
+      // control (gate ses4).
+      if (/(^|[._])(session_move|session_rename|worktree_create|worktree_remove|list_mcp_resources|read_mcp_resource)$/.test(tool)) {
+        throw new Error("SAFETY GATE: session. Agents do not move or rename sessions, make worktrees or read MCP resources.")
+      }
 
       if (tool === "shell") {
         const cmd = typeof input?.command === "string" ? input.command : ""
-
-        if (isCommitOrTag(cmd)) {
-          // the project the commit runs in (its workdir; no workdir = the session dir). Not parsed: git -C, cd;
-          // the sandbox denies every agent write under .git, so such a commit fails anyway
-          const proj = projectOf(resolveTarget(input?.workdir || SESSION_DIR))
-          if (!proj) {
-            throw new Error("SAFETY GATE: ship gate. This commit runs outside a mini project. Run git commit with workdir mini-projects/<slug>; the gate checks that project's review.")
-          }
-          if (!has(proj, "REVIEW.md")) {
-            throw new Error("SAFETY GATE: ship gate. REVIEW.md missing. Run /go first; the review comes before any commit.")
-          }
-          const slug = path.basename(proj)
-          // one read-only call: REVIEW.md as it reads now (a human may have edited it) and the tree hash now
-          const live = await pyFacts("review", proj)
-          if (!isStr(live?.tree)) throw new Error("SAFETY GATE: ship gate. cannot read the review or compute the tree hash, so freshness is unknown.")
-          if (typeof live.verdict !== "string") {
-            throw new Error(`SAFETY GATE: ship gate. review is missing: REVIEW.md has no VERDICT line. Run /go ${slug} to review.`)
-          }
-          // the recorded review (written by this plugin when REVIEW.md was written) must agree with the file
-          const review = readState(proj)?.review
-          if (live.verdict !== "SHIP" || (review && typeof review.verdict === "string" && review.verdict !== "SHIP")) {
-            throw new Error(
-              `SAFETY GATE: ship gate. review verdict is "${review?.verdict ?? live.verdict}", not SHIP. Fix the findings and re-review (/go ${slug}) before committing.`,
-            )
-          }
-          if (!review || typeof review.verdict !== "string") {
-            throw new Error(`SAFETY GATE: ship gate. review is missing: no recorded verdict for ${slug}. Run /go ${slug} to review.`)
-          }
-          if (review.tree_sha256 !== live.tree) {
-            throw new Error(`SAFETY GATE: ship gate. review is stale: code changed since REVIEW.md; run /go ${slug} to review again.`)
-          }
-        }
 
         if (/approve\.sh/.test(cmd)) {
           throw new Error("SAFETY GATE: approval. Only the human approves a plan, by typing /approve <slug>.")
@@ -999,15 +1240,20 @@ export default {
         for (const raw of writePaths(tool, input)) {
           const target = realTarget(resolveTarget(raw)) // real spelling: symlinks and case aliases refused
           const mini = confine(target)
-          await checkWrite(target, mini) // harness state + plan gate, on the real path
           const proj = projectOf(target, mini)
+          // a project's own opencode config, as agent.sb refuses it to shells (R30)
+          const top = proj ? path.relative(proj, target).split(path.sep)[0].toLowerCase() : ""
+          if ([".opencode", ".claude", ".agents", "opencode.json", "opencode.jsonc"].includes(top)) {
+            throw new Error(`SAFETY GATE: write confinement. ${path.relative(path.dirname(mini), target)} is the project's own opencode config; agents never write it.`)
+          }
+          await checkWrite(target, mini) // harness state + plan gate, on the real path
           if (proj) await checkScope(event, target, proj)
         }
       }
     })
 
     /** A shell run, verbatim at the project root, of a step check or the acceptance run (spec 6.3). Steps open:
-     *  only a builder's run of a batch step counts (a reviewer running an unbuilt step's check must not charge it),
+     *  only a builder's run of the turn's step counts (a reviewer running an unbuilt step's check must not charge it),
      *  and qa's failing acceptance run pins the tests hash and the command. All done: verify.* for the current tree.
      *  qa and verify belong to the steps' milestone (T7-R8): another milestone's record is replaced, never extended. */
     const recordCheck = async (event: any) => {
@@ -1033,6 +1279,7 @@ export default {
       const isAcceptance = isStr(facts?.run) && facts.run !== "" && normCmd(facts.run) === run
       if (!matching.length && !isAcceptance && !pinned) return
       let wrote = false
+      const green: any[] = [] // the save points this run earned (spec 4.1), made after its records are written
 
       if (open) {
         if (isAcceptance) { // the tests fail first (W4)
@@ -1042,22 +1289,25 @@ export default {
               const ms = msOf(st)
               st.qa = { ...(isObj(st.qa) && st.qa.milestone === ms ? st.qa : {}), failed_first_at: nowIso(), tests_sha256: tests, run, milestone: ms }
             })
+            if (wrote) green.push({ kind: "tests" }) // "M<n> acceptance tests (red by design)"
           }
         }
         const tie = agent === "builder" ? await tieOf(String(event.sessionID ?? "")) : null
         const snap = readSnap(proj)
-        const inBatch = (n: number) => !snap || snap.steps.includes(n) // only steps of the issued batch are credited
-        const mine = tie?.kind === "step" && tie.proj && samePath(tie.proj, proj) && inBatch(tie.n!)
+        const inTurn = (n: number) => !snap || snap.steps.includes(n) // only the step of the issued turn is credited
+        const mine = tie?.kind === "step" && tie.proj && samePath(tie.proj, proj) && inTurn(tie.n!)
         const pick = (agent !== "builder" ? [] : mine ? matching.filter((s: any) => s.n === tie!.n) : matching.length === 1 ? matching : [])
-          .filter((s: any) => inBatch(s.n))
+          .filter((s: any) => inTurn(s.n))
         if (pick.length === 1 && !pick[0].done_at) {
           const n = pick[0].n
           const text = event.status === "error" ? String(event.error?.message ?? event.error ?? "tool error") : String(out?.output ?? "")
+          let done = false
           wrote = (await queueWrite(proj, (st) => {
             const s = stepsOf(st).find((x) => x.n === n)
             if (!s || s.done_at || !isStr(s.check) || normCmd(s.check) !== run) return false
             if (code === 0) {
               s.done_at = nowIso()
+              done = true
             } else {
               const was = Number.isInteger(s.attempts) ? s.attempts : 0
               const base = snap?.attempts[String(n)] // at most one failed attempt per step per turn (final review I1)
@@ -1065,6 +1315,7 @@ export default {
               s.last_failure = `exit ${code ?? "none"}\n${lastLines(text, 40)}`
             }
           })) || wrote
+          if (done) green.push({ kind: "step", n }) // "step <n>: <title>" with that step's files
         }
       } else {
         if (code === null) return // no exit code (refused, errored, timed out): not a result; verify stays pending
@@ -1087,6 +1338,7 @@ export default {
           })
         }
       }
+      for (const ev of green) await checkpointAfter(proj, ev) // awaited: saved before the agent's next model step
       if (wrote) refreshDashboard()
     }
 
@@ -1096,8 +1348,10 @@ export default {
     const recordDoc = async (proj: string, kind: "review" | "qa" | "visual") => {
       const f = await pyFacts(kind, proj)
       const ok = isStr(f?.tree) && isStr(f?.verdict)
+      let fixRound = 0
       const wrote = await queueWrite(proj, (st) => {
         const ms = msOf(st) // qa and visual belong to the steps' milestone (T7-R8)
+        fixRound = Number.isInteger(st.fix_rounds) ? st.fix_rounds : 0 // a QA PASS after a FIX turn saves that round
         if (kind === "qa") {
           const mine = isObj(st.qa) && st.qa.milestone === ms ? st.qa : null
           if (!ok && !mine) return false
@@ -1111,10 +1365,12 @@ export default {
         st[kind] = kind === "review" ? { tree_sha256: f.tree, verdict: f.verdict, at: nowIso() } : { verdict: f.verdict, tree_sha256: f.tree, milestone: ms }
         if (kind === "review" && f.verdict === "SHIP") st.fix_rounds = 0
       })
+      // spec 4.1: only a verdict that is present is a green event (a QA.md written without one saves nothing)
+      if (wrote && ok) await checkpointAfter(proj, kind === "qa" ? { kind, verdict: f.verdict, fix_round: fixRound } : { kind, verdict: f.verdict })
       if (wrote) refreshDashboard()
     }
     const DOC_OWNER = new Map<string, ["review" | "qa" | "visual", string | null]>([
-      ["REVIEW.md", ["review", null]], ["QA.md", ["qa", "qa"]], ["VISUAL.md", ["visual", "designer"]],
+      ["REVIEW.md", ["review", null]], ["QA.md", ["qa", "qa"]], ["VISUAL.md", ["visual", "inspector"]],
     ])
 
     await ctx.tool.hook("execute.after", async (event: any) => {

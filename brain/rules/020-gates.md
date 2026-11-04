@@ -16,14 +16,14 @@ The v4 loop: /new (idea, brainstorm) -> /go (lock the brief, then the automatic 
 6. STEP DONE - only when the plugin sees the step's exact check pass. The builder's word is not proof.
    2 failed checks -> STUCK, the human decides. A failed spike (a step with `proves`) -> REARCHITECT instead.
 7. REVIEW - REVIEW.md with `VERDICT: SHIP` (blind spots are a section of it). Max 2 review->fix rounds.
-8. SHIP - /ship's first status line is the freshness check for the human's commit: recorded SHIP verdict + live
-   REVIEW.md + matching tree hash. Then trusted code records the milestone as shipped; the next /go plans the next
-   one. The plugin ship gate stops an agent's plain git commit; agents cannot write .git at all.
-9. HUMAN - the human commits, pushes and publishes.
+8. SHIP - /ship's first status line is the freshness check: recorded SHIP verdict + live REVIEW.md + matching tree
+   hash. `/ship yes` then commits, tags and records the milestone (trusted code); the next /go plans the next one.
+   Agents cannot write .git at all.
+9. HUMAN - the human pushes and publishes (/publish), runs the app (/deploy) and can /undo to the last save point.
 
 Limits, all in code:
 - 2 failed attempts per automatic stage -> STUCK. `/go <slug> retry` (or /approve) clears the count.
-- 16 delegations per human turn (circuit breaker); at most 3 open at once, never in the background.
+- 16 delegations per human turn (circuit breaker); one delegation open at a time, never in the background.
 - Autopilot stops at a cost cap ($10 per milestone, `/go cap <usd>`) and at a turn cap (3 x steps + 10); `/stop` ends it.
 - One chain per project: `.harness/lock`, freed when the orchestrator's turn ends, expires after 30 minutes.
   /approve and /ship refuse while it is fresh (they would judge files the chain is still writing).

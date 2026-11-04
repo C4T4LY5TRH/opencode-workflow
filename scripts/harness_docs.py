@@ -4,6 +4,7 @@
 Stdlib only, no imports from other harness modules. Every DocError message starts with the file name and
 names the exact line or id, because it is fed back verbatim to the agent that wrote the file.
 """
+import os
 import posixpath
 import re
 
@@ -93,7 +94,7 @@ def paths_overlap(a, b):
     return a == b or (a.endswith("/") and b.startswith(a)) or (b.endswith("/") and a.startswith(b))
 
 
-# Paths no builder step may own: QA's tests, request/research files, designer output, harness state, the doc files.
+# Paths no builder step may own: QA's tests, request/research files, designer and inspector output, harness state, the doc files.
 HARNESS_OWNED = ("tests/acceptance/", "requests/", "RESEARCH/", "design/", ".harness/",
                  "BRIEF.md", "BRAINSTORM.md", "ARCHITECTURE.md", "DESIGN.md", "PLAN.md", "REVIEW.md",
                  "CRITIQUE.md", "BUGHUNT.md", "QA.md", "VISUAL.md")
@@ -161,6 +162,56 @@ def parse_answers(text, name="file"):
     return out
 
 
+# --- ## DEPLOY (spec 7.1) -------------------------------------------------------------------------
+
+KNOWN_KINDS = ("service", "none")
+PREVIEW_PORTS = (4800, 4899)  # assign_port hands these out; a deployed app must not sit on one
+
+
+def parse_deploy(text):
+    """ARCHITECTURE.md text -> {"kind", "build", "start", "port", "health", "data"}. Raises PlanError naming what is wrong."""
+    name = "ARCHITECTURE.md"
+    body = sections(text).get("DEPLOY")
+    if body is None:
+        raise PlanError(f"{name}: add a ## DEPLOY section (kind, build, start, port, health, data)")
+    vals, last = {}, None
+    for l in _bullets(body):
+        m = re.match(r"^[-*]\s*(kind|build|start|port|health|data)\s*:\s*(.*)$", l, re.I)
+        if m:
+            last = m.group(1).lower()
+            vals.setdefault(last, m.group(2).strip().strip("`").strip())
+        elif last and re.match(r"^\s", l):  # an indented continuation: the value runs over two lines
+            raise PlanError(f"{name}: DEPLOY {last} must be one line")
+        else:
+            last = None
+    kind = vals.get("kind", "").lower()
+    if not kind:
+        raise PlanError(f"{name}: DEPLOY needs a '- kind: service | none' line")
+    if kind not in KNOWN_KINDS:
+        raise PlanError(f"{name}: DEPLOY kind {kind} has no adapter yet: use service or none, or add the adapter")
+    out = {"kind": kind, "build": None, "start": None, "port": None, "health": None, "data": False}
+    if kind == "none":
+        return out
+    for f in ("start", "port", "health"):
+        if not vals.get(f):
+            raise PlanError(f"{name}: DEPLOY kind service needs {f}")
+    port_msg = f"{name}: DEPLOY port must be 1024-65535 and outside {PREVIEW_PORTS[0]}-{PREVIEW_PORTS[1]} (preview ports)"
+    if not re.fullmatch(r"\d{1,5}", vals["port"]):
+        raise PlanError(port_msg)
+    port = int(vals["port"])
+    if not 1024 <= port <= 65535 or PREVIEW_PORTS[0] <= port <= PREVIEW_PORTS[1]:
+        raise PlanError(port_msg)
+    if not vals["health"].startswith("/"):
+        raise PlanError(f"{name}: DEPLOY health must be a path starting with /")
+    data = vals.get("data", "no").lower()
+    if data not in ("yes", "no"):
+        raise PlanError(f"{name}: DEPLOY data must be yes or no")
+    build = vals.get("build", "")
+    out.update(build=None if build.lower() in ("", "none") else build, start=vals["start"], port=port,
+               health=vals["health"], data=data == "yes")
+    return out
+
+
 # --- ARCHITECTURE.md -----------------------------------------------------------------------------
 
 def parse_architecture(text, feature_ids, must_ids, ui=False):
@@ -224,14 +275,15 @@ def parse_architecture(text, feature_ids, must_ids, ui=False):
             preview = m.group(1).strip().strip("`").strip() or None
     if ui and preview is None:
         raise DocError(f"{name}: ui: yes needs a '- preview: <command>' line in STACK")
-    return {"risks": risks, "milestones": milestones, "preview": preview,
+    deploy = parse_deploy(text)
+    return {"risks": risks, "milestones": milestones, "preview": preview, "deploy": deploy,
             "answers": parse_answers(text, name), "feature_ids": set(feature_ids)}
 
 
 # --- PLAN.md -------------------------------------------------------------------------------------
 
 def parse_plan(text):
-    """PLAN.md text -> [{"n", "title", "files", "check", "covers", "proves"}]. Raises PlanError naming what is wrong."""
+    """PLAN.md text -> [{"n", "title", "files", "check", "covers", "proves", "after", "design"}]. Raises PlanError naming what is wrong."""
     lines = _lines(text)
     start = next((i for i, l in enumerate(lines) if re.match(r"^##\s+STEPS\s*$", l, re.I)), None)
     if start is None:
@@ -259,9 +311,9 @@ def parse_plan(text):
         if n != idx:
             raise PlanError(f"step {n} ('{title}') is out of order: expected step {idx} (steps run 1..N with no gaps)")
         who = f"step {n} ('{title}')"
-        files, checks, covers, proves, after = [], [], [], None, None
+        files, checks, covers, proves, after, design = [], [], [], None, None, []
         for l in rest:
-            m = re.match(r"^\s*[-*]\s*(files|done when|covers|proves|after)\s*:\s*(.*)$", l, re.I)
+            m = re.match(r"^\s*[-*]\s*(files|done when|covers|proves|after|design)\s*:\s*(.*)$", l, re.I)
             if not m:
                 continue
             key = m.group(1).lower()
@@ -277,10 +329,12 @@ def parse_plan(text):
                 raw_after = m.group(2).strip().strip("`").strip()
                 after = []
                 if raw_after and raw_after.lower().rstrip(".") != "none":
-                    for tok in [t for t in re.split(r"[,\s]+", raw_after) if t]:
-                        if not re.fullmatch(r"\d+", tok):
-                            raise PlanError(f"PLAN.md {who}: 'after' needs step numbers or 'none', got '{tok}'")
-                        after.append(int(tok))
+                    toks = [t for t in re.split(r"[,\s]+", raw_after) if t]
+                    # PL4: `after:` is parsed and ignored; a malformed token is not an error (yields [])
+                    after = [int(t) for t in toks] if all(re.fullmatch(r"\d+", t) for t in toks) else []
+            elif key == "design":
+                design = [t.strip().strip("`").strip() for t in m.group(2).split(",")]
+                design = [t for t in design if t and t.lower().rstrip(".") != "none"]
             elif key == "proves":
                 try:
                     ids = _ids(m.group(2), "R", f"PLAN.md {who}")
@@ -298,7 +352,7 @@ def parse_plan(text):
         if not m or not m.group(1).strip():
             raise PlanError(f"{who}: 'done when' needs exactly one command inside one pair of backticks, got: {raw or '(empty)'}")
         steps.append({"n": n, "title": title, "files": files, "check": m.group(1).strip(),
-                      "covers": covers, "proves": proves, "after": after})
+                      "covers": covers, "proves": proves, "after": after, "design": design})
     return steps
 
 
@@ -311,7 +365,26 @@ def plan_milestone(text):
     return None
 
 
-def check_plan(text, arch, milestone):
+PLAN_DESIGN_SECTIONS = ("SUMMARY", "DIRECTION", "TOKENS", "COMPONENTS", "SCREENS", "ACCESSIBILITY")
+
+
+def _design_name_ok(name, design):
+    """F2: a step's `design:` entry is a DESIGN.md section, a SCREENS name, or a SCREENS mockup file that exists."""
+    low = name.lower()
+    if low in (h.lower() for h in PLAN_DESIGN_SECTIONS) or low in (n.lower() for n, _ in design["screens"]):
+        return True
+    path = norm_path(name)  # lowercases first: fine on this case-insensitive Mac, a known limit elsewhere
+    if not path.startswith("design/mockups/") or ".." in path.split("/") or "\\" in name or name[0] in "/~":
+        return False
+    if path not in {norm_path(p) for _, p in design["screens"]}:  # only mockups the human approved (the SCREENS ones)
+        return False
+    base = os.path.realpath(os.path.join(design["proj"], "design", "mockups"))
+    full = os.path.realpath(os.path.join(design["proj"], path))
+    return full.startswith(base + os.sep) and os.path.isfile(full)
+
+
+def check_plan(text, arch, milestone, design=None):
+    """design: for a ui project, parse_design(...) plus {"proj": <project dir>}; None for any other project."""
     name = "PLAN.md"
     check_summary(text, name)
     got = plan_milestone(text)
@@ -334,9 +407,6 @@ def check_plan(text, arch, milestone):
     owned = [norm_path(o) for o in HARNESS_OWNED]
     seen_checks = {}
     for s in steps:
-        for a in s["after"] or []:
-            if a >= s["n"]:
-                raise DocError(f"{name}: step {s['n']} lists after: {a}, which is not an earlier step")
         for f in s["files"]:
             if ".." in f.replace("\\", "/").split("/") or f[0] in "/~" or "\\" in f:
                 raise DocError(f"{name}: step {s['n']} lists {f}: use a plain path inside the project "
@@ -349,6 +419,13 @@ def check_plan(text, arch, milestone):
         if key in seen_checks:
             raise DocError(f"{name}: step {seen_checks[key]} and step {s['n']} share the check {s['check']}")
         seen_checks[key] = s["n"]
+    if design is not None:
+        if not any(s["design"] for s in steps):
+            raise DocError(f"{name}: a UI milestone needs at least one step with a '- design:' line")
+        for s in steps:
+            for d in s["design"]:
+                if not _design_name_ok(d, design):
+                    raise DocError(f"{name}: step {s['n']} design: '{d}' is not in DESIGN.md or design/mockups/")
     if milestone == "M1" and steps[0]["proves"] != "R1":
         raise DocError(f"{name}: step 1 of M1 must have '- proves: R1'")
     covered = {f for s in steps for f in s["covers"]}
@@ -508,10 +585,13 @@ def check_qa(text, must_ids):
     return None
 
 
+VISUAL_VERDICT_RE = re.compile(r"^\s*VERDICT\s*:\s*(MATCH|MINOR|FIX)\s*$", re.I)  # shared with harness_state.visual_items
+
+
 def parse_visual(text):
-    """VISUAL.md -> 'MATCH' | 'FIX' | None (from the first 'VERDICT: MATCH|FIX' line)."""
+    """VISUAL.md -> 'MATCH' | 'MINOR' | 'FIX' | None (from the first 'VERDICT: MATCH|MINOR|FIX' line)."""
     for l in _lines(text):
-        m = re.match(r"^\s*VERDICT\s*:\s*(MATCH|FIX)\s*$", l, re.I)
+        m = VISUAL_VERDICT_RE.match(l)
         if m:
             return m.group(1).upper()
     return None

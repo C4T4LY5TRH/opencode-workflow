@@ -58,6 +58,15 @@ def _goal(proj):
     return m.group(1).strip() if m else ""
 
 
+def _deploy_line(slug, state):
+    """deploy.py's line (spec 7.2: read from <APPS_HOME>/<slug>/deploys.json), None when there is nothing to say."""
+    try:
+        import deploy as dp  # here: a test's copy of status.py may sit without deploy.py beside it
+    except ImportError:
+        return None
+    return dp.status_line(slug, bool(state.get("milestones_shipped")))
+
+
 def info(workshop, slug):
     """Everything shown about one project. Never raises: a project that cannot be read gets an `error`."""
     proj = os.path.join(workshop, "mini-projects", slug)
@@ -65,6 +74,11 @@ def info(workshop, slug):
          "findings": [], "updated": None, "status": slug, "autopilot": False, "cost": 0, "project_cost": 0, "batch": ""}
     try:
         ph = hs.stage(proj)
+        rnd = hs.fix_running(proj)  # F3: a fix round is issued but not yet judged: FIX, not STUCK (the last round)
+        if rnd and ph["stage"] == "STUCK":
+            ph = {**ph, "stage": "FIX"}
+        elif ph["stage"] != "FIX":
+            rnd = None
         d.update(stage=ph["stage"], step=ph["step"], done=ph["done"], total=ph["total"], reason=ph["reason"],
                  milestone=ph["milestone"], at=ph["at"], problem=ph["error"],
                  batch=", ".join(f"{i['kind']} {i['n']}" for i in ph["batch"]))
@@ -78,21 +92,32 @@ def info(workshop, slug):
         d.update(status=nx.status_line(slug, ph, state), autopilot=bool((state.get("autopilot") or {}).get("on")),
                  cost=(cost.get("usd") or 0) if cost.get("milestone") == ph["milestone"] else 0,
                  project_cost=cost.get("project_usd") or 0)
+        d["fix_round"] = f"FIX round {rnd}/{hs.FIX_LIMIT}" if rnd else None
+        d["fix_running"] = f"{d['fix_round']} running" if rnd else None
         d["steps"] = [s for s in state.get("steps", []) if isinstance(s, dict)]
         d["approved_at"] = state.get("approved_at")
+        vr = state.get("visual_runs")
+        d["visual_runs"] = (vr.get(ph["milestone"]) or 0) if isinstance(vr, dict) and ph.get("milestone") else 0
+        blk = state.get("checkpoint_block")  # spec 4.2: a save point that waits for the human, and the scan notes
+        d["blocked"] = f"save point blocked: {hs.block_reason(blk, slug)}" if blk else None
+        d["scan_notes"] = state.get("scan_notes") or []
+        d["deploy"] = _deploy_line(slug, state)
         rev = state.get("review")
         if isinstance(rev, dict) and rev.get("verdict") and ph["stage"] in ("REVIEW", "FIX", "SHIP", "STUCK") and not ph["step"]:
             d["review"] = rev["verdict"] + (" (stale: code changed since)" if ph["stage"] == "REVIEW" else "")
             if ph["stage"] != "REVIEW":
                 lines = [l.rstrip() for l in _read(os.path.join(proj, "REVIEW.md")).splitlines() if l.strip()]
                 d["findings"] = lines[:REVIEW_LINES]
+        if ph["stage"] in ("REVIEW", "STUCK") and not d["problem"]:
+            d["problem"] = hs.review_problem(proj)  # a lens missing from ## Hunt: why no verdict was recorded
         mtimes = [os.path.getmtime(p) for p in (os.path.join(proj, ".harness", "state.json"),
                   os.path.join(proj, "PLAN.md"), os.path.join(proj, "REVIEW.md")) if os.path.exists(p)]
         d["updated"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(max(mtimes))) if mtimes else None
     except Exception as exc:  # one broken project must not hide the others
         d.update(stage="?", step=None, done=0, total=0, reason="", milestone=None, at=None, problem=None,
                  error=f"could not read this project ({exc.__class__.__name__})")
-    d["next"] = nx.next_command(slug, d["stage"], d["at"])
+    d["next"] = (f"wait for {d['fix_round']} to finish, then /status {slug}"
+                 if d.get("fix_running") else nx.next_command(slug, d["stage"], d["at"]))
     d["digest"] = nx.digest(workshop, slug) if d["stage"] == "DECIDE" else None
     return d
 
@@ -134,11 +159,19 @@ def _detail(d):
     if d["batch"]:
         out.append(f"batch: {d['batch']}")
     out.append(f"cost: {_costs(d)}")
-    out.append(d["error"] or d["reason"])
+    if d.get("visual_runs"):
+        out.append(f"visual runs: {d['visual_runs']}/{hs.VISUAL_RUN_CAP}")
+    out.append(d["error"] or d.get("fix_running") or d["reason"])
+    if d.get("blocked"):
+        out.append(d["blocked"])
+    if d.get("scan_notes"):
+        out.append(f"scan notes: {', '.join(d['scan_notes'])}")
     if d["problem"] and d["stage"] != "DECIDE":
         out.append(f"problem: {d['problem']}")
     if d["approved_at"]:
         out.append(f"approved: {d['approved_at']}")
+    if d.get("deploy"):
+        out.append(d["deploy"])
     cur = next((s for s in d["steps"] if not s.get("done_at")), None)
     for s in d["steps"]:
         mark = "✓" if s.get("done_at") else ("→" if s is cur else "·")
@@ -170,8 +203,8 @@ def text(workshop, slug=None):
         d = info(workshop, s)
         run = f"  {_autopilot(d)}  {_costs(d, 'milestone', 'project', ' / ')}" if d["autopilot"] or d["project_cost"] else ""
         out.append(f"{s:<16} {d['stage']:<11} {_progress(d):<16} next: {d['next']}{run}")
-        if d["error"] or d["stage"] == "STUCK":
-            out.append(f"{'':<16} {d['error'] or d['reason']}")
+        if d["error"] or d["stage"] == "STUCK" or d.get("fix_running"):
+            out.append(f"{'':<16} {d['error'] or d.get('fix_running') or d['reason']}")
     return "\n".join(out) + "\n"
 
 
@@ -201,7 +234,9 @@ def _card(d):
     if d["goal"]:
         h.append(f'<p class="goal">{esc(d["goal"])}</p>')
     h.append(f'<progress value="{d["done"]}" max="{max(d["total"], 1)}"></progress>')
-    h.append(f'<p class="{"err" if d["error"] else "dim"}">{esc(d["error"] or d["reason"])}</p>')
+    h.append(f'<p class="{"err" if d["error"] else "dim"}">{esc(d["error"] or d.get("fix_running") or d["reason"])}</p>')
+    if d.get("blocked"):
+        h.append(f'<p class="err">{esc(d["blocked"])}</p>')
     run = [_autopilot(d), _costs(d, sep=" · ")] + ([f"batch: {d['batch']}"] if d["batch"] else [])
     h.append(f'<p class="dim">{esc(" · ".join(run))}</p>')
     cur = next((s for s in d["steps"] if not s.get("done_at")), None)

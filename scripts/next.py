@@ -66,22 +66,23 @@ def _render(c):
 
 
 REPORT = "Report in at most 10 lines."  # W12: every worker's final report is capped
-PREAMBLE_BATCH = "Make these delegations in ONE reply (they run at the same time), wait for all, then run the last item."
 PREAMBLE_SEQ = ("Do the numbered items in order, one delegation at a time, and wait for each to finish. Never write "
                 "these files yourself.")
 RUN_STATUS = "run: python3 scripts/status.py {slug} and relay its STATUS line only"
-KIND_ORDER = ("step", "research", "testfix")  # the order of a batch's delegations
 
 
 def status_line(slug, st, state):
-    """`<slug>  <STAGE>  steps <n,…> done  <done>/<total>  $<milestone cost>`: running cost, never the cap (B3)."""
+    """`<slug>  <STAGE>  steps <n,…> done  <done>/<total>  $<milestone cost>  saved: <event> · <sha7>`: running
+    cost, never the cap (B3); the last save point (spec 4.2) when there is one."""
     cm = st.get("milestone")
     steps = [s for s in state.get("steps", []) if isinstance(s, dict) and s.get("milestone") == cm]
     done = ",".join(str(s.get("n")) for s in steps if s.get("done_at")) or "none"
     cost = state.get("cost") or {}
     usd = cost.get("usd") or 0 if cost.get("milestone") == cm else 0
+    ck = state.get("checkpoint") or {}
     return (f"{slug}  {st['stage']}  steps {done} done  {st['done']}/{st['total']}"
-            + (f"  ${usd:.2f}" if usd > 0 else ""))
+            + (f"  ${usd:.2f}" if usd > 0 else "")
+            + (f"  saved: {ck['event']} · {ck['sha'][:7]}" if ck.get("sha") and ck.get("event") else ""))
 
 
 def _step_fields(c, step, total):
@@ -101,7 +102,11 @@ def _build_text(slug, step, failure):
     n, p = step.get("n"), f"mini-projects/{slug}"
     files = ", ".join(step.get("files") or []) or "(none listed)"
     text = (f"Build step {n} ('{_c(step.get('title'))}') of {p}. Touch only these files: {files} (paths are relative "
-            f"to {p}). If the step cannot work without a file not listed, or needs facts, write {p}/requests/step{n}.md "
+            f"to {p}). ")
+    design = [_c(x) for x in step.get("design") or [] if isinstance(x, str)]
+    if design:
+        text += f"Read these first (DESIGN.md sections, screens and mockups in {p}): {'; '.join(design)}. "
+    text += (f"If the step cannot work without a file not listed, or needs facts, write {p}/requests/step{n}.md "
             "(first line 'RESEARCH: <question>' or 'TEST-WRONG: <test file> — <why it cannot pass>') and stop. "
             "Do not edit PLAN.md or REVIEW.md. ")
     if failure:
@@ -158,10 +163,11 @@ def _visual_text(slug):
     return (f"Compare the running app of {p} with its mockups. Start it in the background with `bash scripts/preview.sh "
             f"{slug}` (it prints the address), open each screen listed in {p}/DESIGN.md '## SCREENS', save a "
             f"screenshot of each into {p}/design/shots/, compare it with its mockup, then write {p}/VISUAL.md: "
-            "'VERDICT: MATCH' or 'VERDICT: FIX' on the first line, then per screen the screenshot path, what differs "
+            "'VERDICT: MATCH', 'VERDICT: MINOR' or 'VERDICT: FIX' on the first line, then per screen the screenshot path, what differs "
             "from the mockup and a fix. 'VERDICT: FIX' only when a screen this milestone builds breaks a DESIGN.md "
-            "token or the accessibility floor, or visibly works wrong; list every other difference (polish, anything "
-            "PLAN.md leaves to a later milestone) under 'Later': it does not make the verdict FIX. "
+            "token or the accessibility floor, or visibly works wrong; 'VERDICT: MINOR' when only "
+            "differences outside that rule remain; list them (polish, anything PLAN.md leaves to a later milestone) "
+            "under 'Later': they never make the verdict FIX. "
             f"Change no other file. {REPORT}")
 
 
@@ -169,34 +175,42 @@ def _review_text(slug):
     p = f"mini-projects/{slug}"
     return (f"review {p} against its PLAN.md; write {p}/REVIEW.md, and change no code. REVIEW.md needs: a line 'VERDICT: SHIP', "
             "'VERDICT: FIX FIRST' or 'VERDICT: REWORK'; the findings, each with the file and what is wrong; and a "
-            "'## Blind spots' section (what this review could not check, what could still go wrong). Also read "
+            "'## Blind spots' section (what this review could not check, what could still go wrong), and a '## Hunt' "
+            "section with one line per lens: '- logic:', '- edge cases:', '- concurrency:', '- resource leaks:', "
+            "'- runtime failures:', each 'checked <what you read or ran>' or 'see <finding title>' (without them the "
+            "review is not recorded). Mark each BLOCKER or MAJOR finding 'evidence: PROVEN' or 'evidence: TRACED'; "
+            "suspicions go under '## Leads'. Also read "
             "README.md and tests/acceptance/ (judge the tests against BRIEF.md). Findings about PLAN.md or other docs "
             "go under '## Plan notes', never FIX FIRST. "
             "Never assume the step checks still pass (a later step or a fix may have broken one): run every step "
             "check from PLAN.md that is a test runner you may run, and list the others under Blind spots "
             "(not running a check is never a finding and never a reason for FIX FIRST). "
-            f"Run shell commands one per call with workdir {p}: read-only git, ls/cat/grep and "
-            "test runners (node --test <file>, npm test, pytest) only; cd, echo, node -e and && or ; chains are "
+            f"Run shell commands one per call with workdir {p}: read-only git, ls/cat/grep, "
+            "test runners (node --test <file>, npm test, pytest) and your own probes (python3 .review/<file>, "
+            "node .review/<file>; write them only under .review/) only; cd, echo, node -e and && or ; chains are "
             f"refused. Then stop. {REPORT}")
 
 
 def _fix_text(slug, rounds, files):
     p = f"mini-projects/{slug}"
+    # spec 6: a regression test per proven finding, under tests/ (QA owns tests/acceptance/); the QA PASS that
+    # follows saves the fix round with those tests
     return (f"Fix the findings in {p}/REVIEW.md, {p}/QA.md and {p}/VISUAL.md (whichever lists failures; fix round "
-            f"{rounds} of {hs.FIX_LIMIT}). Fix only what they list, and touch only these files: "
-            f"{', '.join(files) or '(none listed)'} (paths are relative to {p}). Do not edit PLAN.md, REVIEW.md, "
-            f"QA.md, VISUAL.md or tests/acceptance/. Then stop. {REPORT}")
+            f"{rounds} of {hs.FIX_LIMIT}). Fix only what they list. For each PROVEN or TRACED finding in REVIEW.md, "
+            f"first add a test under {p}/tests/ (never tests/acceptance/) that fails because of that finding, then fix "
+            f"the code so the test passes. Touch only these files: {', '.join(files) or '(none listed)'} and your "
+            f"tests under tests/ (paths are relative to {p}). Do not edit PLAN.md, REVIEW.md, QA.md, VISUAL.md or "
+            f"tests/acceptance/. Then stop. {REPORT}")
 
 
-def _work_items(slug, st, state, d, fix_round):
+def _work_items(slug, st, state, d, fix_round, tree=None):
     """[(agent, what, text)] of an automatic stage: `what` is the word after '<slug>: ' in the delegation description."""
     name, cm = st["stage"], st["milestone"]
     steps = [s for s in state.get("steps", []) if isinstance(s, dict) and s.get("milestone") == cm]
     by_n = {s.get("n"): s for s in steps}
     if name == "BUILD":
-        batch = sorted(st["batch"], key=lambda i: KIND_ORDER.index(i["kind"]))
         out = []
-        for i in batch:
+        for i in st["batch"]:  # one item per turn
             n = i["n"]
             if i["kind"] == "step":
                 out.append(("builder", f"step {n}", _build_text(slug, by_n[n], _failure(by_n[n]))))
@@ -212,8 +226,8 @@ def _work_items(slug, st, state, d, fix_round):
         return [("qa", "tests", _tests_text(slug, cm, must))]
     if name == "VERIFY":
         out = [("qa", "verify", _verify_text(slug, steps))]
-        if d["brief"]["ui"]:
-            out.append(("designer", "visual", _visual_text(slug)))
+        if d["brief"]["ui"] and hs.visual_needed(state, cm, tree):  # not capped, tree not yet judged; counted in _go
+            out.append(("inspector", "visual", _visual_text(slug)))
         return out
     if name == "REVIEW":
         return [("reviewer", "review", _review_text(slug))]
@@ -221,9 +235,9 @@ def _work_items(slug, st, state, d, fix_round):
     return [("builder", "fix", _fix_text(slug, fix_round, files))]
 
 
-def _work_contract(slug, st, state, d, fix_round):
+def _work_contract(slug, st, state, d, fix_round, tree=None):
     """The contract of TESTS, BUILD, VERIFY, REVIEW and FIX: one worker, or a numbered list of delegations."""
-    items = _work_items(slug, st, state, d, fix_round)
+    items = _work_items(slug, st, state, d, fix_round, tree)
     c = {"PHASE": st["stage"], "AGENT": ", ".join(a for a, _, _ in items), "NEXT COMMAND": f"/go {slug}",
          "STATUS": status_line(slug, st, state)}
     if len(items) == 1:
@@ -234,8 +248,7 @@ def _work_contract(slug, st, state, d, fix_round):
         return _render(c)
     lines = [f'{i}. @{agent} (description "{slug}: {what}") {text}' for i, (agent, what, text) in enumerate(items, 1)]
     lines.append(f"{len(lines) + 1}. " + RUN_STATUS.format(slug=slug))
-    pre = PREAMBLE_BATCH if st["stage"] == "BUILD" else PREAMBLE_SEQ
-    c.update(INSTRUCTION=pre + "\n" + "\n".join(lines), STATUS=AFTER_CHAIN)
+    c.update(INSTRUCTION=PREAMBLE_SEQ + "\n" + "\n".join(lines), STATUS=AFTER_CHAIN)
     return _render(c)
 
 
@@ -321,7 +334,7 @@ def chain_plan(workshop, slug, st):
     return plan
 
 
-def _write_text(agent, slug, ms, revise_text):
+def _write_text(agent, slug, ms, revise_text, design=False):
     """The instruction of a 'write' item: the file format by section names, paths from the project."""
     p = f"mini-projects/{slug}"
     if agent == "architect":
@@ -335,15 +348,18 @@ def _write_text(agent, slug, ms, revise_text):
                 "gaps; M1 = prove R1 + walking skeleton; every [MUST] feature of BRIEF.md in exactly one milestone; "
                 f"only F-ids from BRIEF.md). {UNTRUSTED.format(slug=slug)} {WRITE}")
     if agent == "planner":
-        return (f"Read {p}/BRIEF.md and {p}/ARCHITECTURE.md and write {p}/PLAN.md for {ms}. {revise_text}"
+        ui_read = (f" and {p}/DESIGN.md (its SCREENS names) and {p}/design/mockups/" if design else "")
+        ui_line = (" UI steps add '- design: <names>' (DESIGN.md sections, SCREENS names or SCREENS mockup paths that "
+                   "exist)." if design else "")
+        return (f"Read {p}/BRIEF.md and {p}/ARCHITECTURE.md{ui_read} and write {p}/PLAN.md for {ms}. {revise_text}"
                 "Format, '## ' sections: SUMMARY (1 to 5 lines), MILESTONE (first line 'M<k>: <title>', exactly that "
                 "milestone), SCOPE ('IN: ... / OUT: ... / LATER: ...'), STEPS, ACCEPTANCE, CRITIQUE ANSWERS (leave it "
                 "empty). Each step is a heading '### <n>. <title>' (numbered 1, 2, 3 with no gaps) followed by the lines "
                 "'- files: <path>, <path>', '- covers: F1, F4' (BRIEF features this step delivers, or 'none'), "
                 "'- proves: R1' (only on step 1 of M1, the smallest spike for R1), '- done when: `<one shell command "
                 "that exits 0 when the step works>`' (exactly one command inside exactly one pair of backticks) and "
-                "'- risk: ...'. Every feature ARCHITECTURE.md assigns to the milestone must be covered by some step. "
-                f"Keep steps small. The checks run from inside {p}: write the files paths and the done-when command as "
+                "'- risk: ...'. Every feature ARCHITECTURE.md assigns to the milestone must be covered by some step."
+                f"{ui_line} Keep steps small. The checks run from inside {p}: write the files paths and the done-when command as "
                 f"if you are inside that folder (no '{p}/' prefix, no cd). {UNTRUSTED.format(slug=slug)} {WRITE}")
     if agent == "critic":
         return (f"Read BRIEF.md, ARCHITECTURE.md, PLAN.md (and DESIGN.md if it exists) in {p} and add one new round to "
@@ -396,12 +412,16 @@ def chain_items(workshop, slug, st):
           "the first milestone of ARCHITECTURE.md that has not shipped yet (check '## MILESTONES' there)")
     arch_rev, plan_rev = _revise_text(proj, st, _state(proj))
     items, seen = [], set()
-    for agent, kind in chain_plan(workshop, slug, st):
+    plan = chain_plan(workshop, slug, st)
+    brief = hs.docs(proj)["brief"]
+    design = bool(brief and brief["ui"]) and (os.path.isfile(os.path.join(proj, "DESIGN.md"))
+                                              or any(a == "designer" and k == "write" for a, k in plan))
+    for agent, kind in plan:
         fname = AGENT_FILE[agent]
         if kind == "answer":
             text = _answer_text(agent, slug, fname)
         else:
-            text = _write_text(agent, slug, ms, arch_rev if agent == "architect" else plan_rev if agent == "planner" else "")
+            text = _write_text(agent, slug, ms, arch_rev if agent == "architect" else plan_rev if agent == "planner" else "", design)
         err = hs.check_file(proj, fname) if fname not in seen else None
         seen.add(fname)
         # "unchanged since the revise" is the revise text's job: "fix exactly that" would invite a token edit
@@ -653,14 +673,15 @@ def _hashes(proj):
     return out
 
 
-def snapshot_take(proj, allowed, steps, kind="build", stage=None, testfix=False):
-    """Write .harness/snapshot.json: the file hashes, what this turn may change, the steps it builds (with their
-    attempts, for the never-ran rule), its kind ("build" or "stage") and, for a stage turn, the stage."""
+def snapshot_take(proj, allowed, steps, kind="build", stage=None, testfix=False, denied=()):
+    """Write .harness/snapshot.json: the file hashes, what this turn may change (`allowed`, minus anything under
+    `denied`), the steps it builds (with their attempts, for the never-ran rule), its kind ("build" or "stage"), for
+    a stage turn the stage, and for a testfix turn its step number."""
     state = hs.load(proj)
     attempts = {str(s["n"]): s.get("attempts") or 0 for s in state.get("steps", [])
                 if isinstance(s, dict) and s.get("n") in steps}
-    snap = {"files": _hashes(proj), "allowed": list(allowed), "steps": list(steps), "kind": kind, "stage": stage,
-            "testfix": testfix, "attempts": attempts, "at": _now()}
+    snap = {"files": _hashes(proj), "allowed": list(allowed), "denied": list(denied), "steps": list(steps),
+            "kind": kind, "stage": stage, "testfix": testfix, "attempts": attempts, "at": _now()}
     _write_json(_snap_path(proj), snap)
 
 
@@ -682,7 +703,9 @@ def snapshot_check(proj):
     snap, changed = _snapshot_diff(proj)
     if snap is None:
         return []
-    return [p for p in changed if not any(hd.paths_overlap(p, a) for a in snap["allowed"] if isinstance(a, str))]
+    denied = [d for d in snap.get("denied") or [] if isinstance(d, str)]
+    return [p for p in changed if not any(hd.paths_overlap(p, a) for a in snap["allowed"] if isinstance(a, str))
+            or any(hd.paths_overlap(p, d) for d in denied)]
 
 
 def _turn_scope(st, state):
@@ -690,7 +713,7 @@ def _turn_scope(st, state):
     name, cm = st["stage"], st["milestone"]
     steps = [s for s in state.get("steps", []) if isinstance(s, dict) and s.get("milestone") == cm]
     by_n = {s.get("n"): s for s in steps}
-    allowed, ns, testfix = [], [], False
+    allowed, ns, testfix, denied = [], [], False, []
     if name == "BUILD":
         for i in st["batch"]:
             if i["kind"] == "step":
@@ -701,17 +724,18 @@ def _turn_scope(st, state):
                 allowed.append("RESEARCH/")
             else:
                 allowed += ["tests/acceptance/", "QA.md"]
-                testfix = True
+                testfix = i["n"]  # its step: the after-turn save point is "tests revised for step <n>"
     elif name == "TESTS":
         allowed = ["tests/acceptance/", "QA.md"]
     elif name == "VERIFY":
         allowed = ["QA.md", "VISUAL.md", "design/shots/"]
     elif name == "REVIEW":
-        allowed = ["REVIEW.md"]
-    else:  # FIX: any file of the milestone's steps
-        allowed = [f for s in steps for f in s.get("files") or [] if isinstance(f, str)]
+        allowed = ["REVIEW.md", ".review/"]  # and the reviewer's throwaway probes
+    else:  # FIX (spec 6): any file of the milestone's steps, and regression tests under tests/ but never QA's
+        allowed = [f for s in steps for f in s.get("files") or [] if isinstance(f, str)] + ["tests/"]
+        denied = ["tests/acceptance/"]
     return {"allowed": list(dict.fromkeys(allowed)), "steps": ns, "kind": "build" if ns else "stage",
-            "stage": name, "testfix": testfix}
+            "stage": name, "testfix": testfix, "denied": denied}
 
 
 def _drop_snapshot(proj):
@@ -774,7 +798,10 @@ def _after_turn(proj, slug, retry):
         return _none(f"Nothing to delegate. Tell the human: files changed outside this turn's scope: {shown}.",
                      status=status_line(slug, hs.stage(proj), state),
                      nxt="/go retry if you made this change; otherwise remove it, then /go")
-    attempts.pop(stage, None)  # a turn that stayed in scope ends the run of failures
+    if stage == "REVIEW" and hs.review_verdict(proj) is None:
+        attempts[stage] = attempts.get(stage, 0) + 1  # in scope but no recorded verdict (e.g. a lens missing in ## Hunt)
+    else:
+        attempts.pop(stage, None)  # a turn that stayed in scope ends the run of failures
     state["stage_attempts"] = attempts
     for n, s in ran:
         asked = any(hd.paths_overlap(p, f"requests/step{n}.md") for p in changed)  # it asked instead of building
@@ -784,7 +811,28 @@ def _after_turn(proj, slug, retry):
         state.setdefault("qa", {})["tests_sha256"] = hs.tests_sha256(proj)
     hs.save(proj, state)
     _drop_snapshot(proj)
+    n = snap.get("testfix")
+    if hs._is_int(n) and n > 0:  # spec 4.1: the revised tests are a save point ("tests revised for step <n>");
+        hs.save_point(proj, {"kind": "testfix", "n": n}, _now())  # a block is the /go stop below (_saved_or_stop)
     return None
+
+
+# --- save points (spec 4.2): a blocked one stops autopilot until /go saves it ------------------
+
+def _saved_or_stop(proj, slug):
+    """A recorded checkpoint_block: run that event's save point again; it saved (the human fixed the file or allowed
+    the finding) -> the block is cleared and this /go carries on; still blocked -> autopilot stops with the way out,
+    and no turn is issued, so nothing builds on work that is not saved."""
+    state = hs.load(proj)
+    block = state.get("checkpoint_block")
+    if not block:
+        return None
+    res = hs.save_point(proj, block["event"], _now(), retry=True)
+    if res["ok"]:
+        return None
+    state = hs.load(proj)
+    return _stop_contract(proj, slug, hs.stage(proj), state, state.get("autopilot") or {},
+                          "save point blocked: " + hs.block_reason(state["checkpoint_block"], slug), f"/go {slug}")
 
 
 def _is_ui(proj):
@@ -799,6 +847,9 @@ def _go(workshop, proj, slug, retry):
     if _bad_state(st):
         return _bad_state_none(slug, st)
     stopped = _after_turn(proj, slug, retry)  # before the stage is computed: a failed turn changes it
+    if stopped:
+        return stopped
+    stopped = _saved_or_stop(proj, slug)  # the last green event's work is not saved yet: retry it before anything
     if stopped:
         return stopped
     if "approved_sha256" in hs.load(proj) and _is_ui(proj):  # one port per project; a stale preview is stopped
@@ -883,7 +934,13 @@ def _go(workshop, proj, slug, retry):
     state["autopilot"] = {"on": True, "milestone": cm, "continue": True, "turns": turns + 1}
     if name == "FIX":
         state["fix_rounds"] = (state.get("fix_rounds") or 0) + 1
-    out = _work_contract(slug, st, state, hs.docs(proj), state.get("fix_rounds") or 0)
+    d = hs.docs(proj)
+    tree = hs.tree_sha256(proj)
+    visual = name == "VERIFY" and bool(d["brief"] and d["brief"]["ui"]) and hs.visual_needed(state, cm, tree)
+    out = _work_contract(slug, st, state, d, state.get("fix_rounds") or 0, tree)
+    if visual:  # the inspector's visual item was issued: count the run now, as fix_rounds is counted
+        runs = state.get("visual_runs") if isinstance(state.get("visual_runs"), dict) else {}
+        state["visual_runs"] = {**runs, cm: (runs.get(cm) or 0) + 1}
     hs.save(proj, state)
     snapshot_take(proj, **_turn_scope(st, state))
     if LOCK_ENABLED:

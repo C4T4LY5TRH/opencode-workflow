@@ -5,7 +5,10 @@ Library: parse_plan, load, save, approve, approved, ship, lock_brief, lock_fresh
 tree_sha256, review_verdict, stage.
 CLI (the writing verbs run from command templates only, never from an agent shell):
   harness_state.py approve <project-dir>   record the human's approval (BRIEF + ARCHITECTURE + PLAN)
-  harness_state.py ship <project-dir>      record the finished milestone
+  harness_state.py ship <project-dir>      the /ship checklist (READY / NOT READY, blind spots, leads, visual items); records nothing
+  harness_state.py ship <project-dir> preview  the same checklist, spelled out (what the /ship template passes)
+  harness_state.py ship <project-dir> yes  /ship yes: re-check, archive requests, ship save point, tag m<n>, record the milestone
+  harness_state.py shiptarget <text>       "<slug> preview|yes" for the /ship template (sets the current project)
   harness_state.py approved <project-dir>  print yes/no: is the current plan approved (read-only)
   harness_state.py tree <project-dir>      print the project's tree hash
   harness_state.py review <project-dir>    print {"tree_sha256", "verdict"} for REVIEW.md as it is now (read-only)
@@ -27,17 +30,19 @@ from harness_docs import PlanError, parse_plan  # noqa: F401  (re-exported for h
 
 RETRY_LIMIT = 2  # failed checks per step before STUCK
 FIX_LIMIT = 2    # review -> fix rounds before STUCK
+VISUAL_RUN_CAP = 2  # inspector visual runs per milestone (counted when next.py _go issues one)
 STAGE_LIMIT = 2  # failed chains per automatic stage before STUCK (v4)
-MAX_PARALLEL = 3     # builder/researcher/qa calls in one batch
 COST_CAP_USD = 10    # default milestone cost cap
 PORT_BASE = 4800     # a project's preview port is PORT_BASE + its number
+SCAN_NOTES_KEPT = 20  # = checkpoint.SCAN_NOTES_KEPT: the scan notes state.scan_notes keeps (the newest)
 AUTOPILOT_STAGES = ("TESTS", "BUILD", "REVIEW", "FIX", "VERIFY")  # the stages the plugin may chain
 # README.md is product code (it is in the tree hash); QA.md and VISUAL.md are agents' reports
 DOC_FILES = {"PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md", "NOTES.md", "LEARNINGS.md",
              "BRIEF.md", "AGENTS.md", "ARCHITECTURE.md", "BRAINSTORM.md", "DESIGN.md", "QA.md", "VISUAL.md"}
-DOC_DIRS = ("RESEARCH/", ".harness/", "requests/", "design/shots/")
+DOC_DIRS = ("RESEARCH/", ".harness/", "requests/", "design/shots/", ".review/")
 WALK_SKIP = {".git", "node_modules"}
 VERDICTS = ("SHIP", "FIX FIRST", "REWORK")
+HUNT_LENSES = ("logic", "edge cases", "concurrency", "resource leaks", "runtime failures")  # the reviewer's ## Hunt lines
 # T7-R9: with every step done no failing run can be recorded any more, so a test change then is the human's call
 TESTS_CHANGED = ("acceptance tests or their run command changed after the build: revert them, or /go retry to accept "
                  "them as they are")
@@ -105,6 +110,7 @@ def _check_shape(data):
             need(s.get(key) is None or isinstance(s[key], str), f"step {key}")
         need(s.get("covers") is None or isinstance(s["covers"], list), "step covers")
         need(s.get("after") is None or isinstance(s["after"], list), "step after")
+        need(s.get("design") is None or isinstance(s["design"], list), "step design")
     need(data.get("approved_sha256") is None or isinstance(data["approved_sha256"], str), "approved_sha256")
     brief = data.get("brief")
     need(brief is None or isinstance(brief, dict), "brief")
@@ -176,6 +182,20 @@ def _check_shape(data):
     if vis is not None:
         for key in ("verdict", "tree_sha256", "milestone"):
             need(vis.get(key) is None or isinstance(vis[key], str), f"visual {key}")
+    vr = data.get("visual_runs")
+    need(vr is None or (isinstance(vr, dict) and all(isinstance(k, str) and _is_int(v) for k, v in vr.items())),
+         "visual_runs")
+    ck = data.get("checkpoint")  # the last save point (spec 4.2)
+    need(ck is None or (isinstance(ck, dict) and all(isinstance(ck.get(k), str) for k in ("sha", "event", "at"))),
+         "checkpoint")
+    blk = data.get("checkpoint_block")
+    need(blk is None or isinstance(blk, dict), "checkpoint_block")
+    if blk is not None:
+        need(isinstance(blk.get("event"), dict) and isinstance(blk.get("rule"), str)
+             and isinstance(blk.get("message"), str) and (blk.get("file") is None or isinstance(blk["file"], str))
+             and (blk.get("line") is None or _is_int(blk["line"])), "checkpoint_block")
+    notes = data.get("scan_notes")
+    need(notes is None or (isinstance(notes, list) and all(isinstance(n, str) for n in notes)), "scan_notes")
 
 
 def save(proj, state):
@@ -368,7 +388,24 @@ def docs(proj):
         else:
             cm = current_milestone(proj, _state_or_empty(proj), out["arch"])
             if cm is not None:  # every milestone shipped: there is no plan to check
-                out["plan_steps"] = attempt("PLAN.md", lambda: hd.check_plan(texts["PLAN.md"], out["arch"], cm))
+                ui = out["brief"]["ui"]
+                design = None  # F2: a ui project with a valid DESIGN.md has its plan steps cite it
+                if ui:
+                    workshop = os.path.dirname(os.path.dirname(os.path.abspath(proj)))
+                    has_designer = os.path.exists(os.path.join(workshop, ".opencode", "agents", "designer.md"))
+                    try:
+                        if "DESIGN.md" not in texts:
+                            raise hd.DocError("no DESIGN.md")
+                        design = dict(hd.parse_design(texts["DESIGN.md"]), proj=proj)
+                    except hd.DocError:
+                        if has_designer:  # R14: no design to cite yet, so the plan cannot pass
+                            errors["PLAN.md"] = "PLAN.md: not checked until DESIGN.md is valid"
+                            cm = None  # not in `skipped`: nothing earlier reports it, so approve names it itself
+                if cm is not None:
+                    out["plan_steps"] = attempt("PLAN.md", lambda: hd.check_plan(texts["PLAN.md"], out["arch"], cm, design))
+                    if not ui and out["plan_steps"]:  # F2: a non-ui project ignores `design:` lines (one place: here)
+                        for st in out["plan_steps"]:
+                            st["design"] = []
     if "CRITIQUE.md" in texts:
         has_design = os.path.exists(os.path.join(proj, "DESIGN.md"))
         out["critique"] = attempt("CRITIQUE.md", lambda: hd.parse_critique(texts["CRITIQUE.md"], has_design))
@@ -577,6 +614,24 @@ def _running(proj, retry_cmd):
     return None
 
 
+def fix_running(proj):
+    """F3: the fix round number while a fresh chain lock stands on a FIX turn, else None. A round is counted when it
+    is issued (a crash cannot hand out a free round), so at the limit stage() already says STUCK while the last round
+    still runs (the router keeps that); status.py presents FIX with a wait hint until that round's result has failed."""
+    lock = lock_fresh(proj)
+    if not lock or not lock["fresh"]:
+        return None
+    try:
+        with open(os.path.join(proj, ".harness", "snapshot.json"), "r", encoding="utf-8") as fh:
+            snap = json.load(fh)
+        state = load(proj)
+    except (OSError, ValueError, StateError):
+        return None
+    if not isinstance(snap, dict) or snap.get("stage") != "FIX" or lock["stage"] != "FIX":
+        return None
+    return state.get("fix_rounds") or None
+
+
 def approve(proj, now):
     """The human's approval: BRIEF + ARCHITECTURE + PLAN (+ DESIGN) are approved together, and every missing item
     is named in one refusal. An unreadable state or a v3 project is refused with its one message; nothing is written."""
@@ -618,6 +673,8 @@ def approve(proj, now):
     if d["arch"] and cm is None:
         note("every milestone is shipped: there is nothing left to approve")
     note(err("PLAN.md"))
+    if errors.get("PLAN.md", "").endswith("not checked until DESIGN.md is valid"):
+        note(errors.get("DESIGN.md") or "DESIGN.md does not exist yet")  # say why DESIGN.md is not valid
     for m in _revise_pending(d, state).values():  # I1: a revise runs its course (H7, H20) before DECIDE
         note(m)
     msg, latest = _critique_problem(d, state, cm)
@@ -645,12 +702,77 @@ def approve(proj, now):
     state["approved_at"] = now
     state["steps"] = steps
     state["fix_rounds"] = 0
+    runs = state.get("visual_runs")
+    if isinstance(runs, dict) and cm in runs:  # a human act: the visual check gets its runs back for this milestone
+        state["visual_runs"] = {k: v for k, v in runs.items() if k != cm}
     state["stage_attempts"] = {}
     state["revise"] = None
     state["critique_requested"] = None
     _drop_turn_record(proj, state)
     save(proj, state)
     return state
+
+
+# --- save points (spec 4.1, 4.2): checkpoint.py commits, its caller records the result -----------
+
+SCAN_RULE_FREE = ("event", "own-repo", "identity", "git", "checkpoint", "agent")  # block rules that are no scan finding
+
+
+def checkpoint_label(event, message):
+    """What state.checkpoint.event says (the status line shows it): `step <n>` for a step, else the commit subject."""
+    if isinstance(event, dict) and event.get("kind") == "step" and _is_int(event.get("n")):
+        return f"step {event['n']}"
+    return message
+
+
+def apply_checkpoint(state, res, now, retry=False):
+    """Record a checkpoint.py result in `state` (the dict; the caller saves it). A save point becomes
+    state.checkpoint; nothing staged leaves the last one. A block stays until a /go retry of ITS event succeeds
+    (retry=True: the result replaces or clears it); another event's save point never clears it, and while one is set
+    a later block does not replace it (the earliest unsaved event is the one /go retries; a later event's files are
+    in the next save point that covers them: QA PASS holds every step file, ship the whole tree). Notes: the newest
+    SCAN_NOTES_KEPT, as `file:line:rule`."""
+    if res.get("ok"):
+        if res.get("sha"):
+            state["checkpoint"] = {"sha": res["sha"], "event": checkpoint_label(res.get("event"), res.get("message")),
+                                   "at": now}
+        if retry:
+            state["checkpoint_block"] = None
+    elif retry or not state.get("checkpoint_block"):
+        state["checkpoint_block"] = res.get("block")
+    notes = [f"{n.get('file')}:{n.get('line')}:{n.get('rule')}" for n in res.get("notes") or [] if isinstance(n, dict)]
+    if notes:
+        state["scan_notes"] = ((state.get("scan_notes") or []) + notes)[-SCAN_NOTES_KEPT:]
+
+
+def block_reason(block, slug, retry=None):
+    """The way out of a blocked save point, as the /go stop, /status and /approve say it (after 'save point
+    blocked: '): a scan finding names the file, the rule and the allow line; any other block gives its own message."""
+    file, rule = block.get("file"), block.get("rule")
+    if file and rule not in SCAN_RULE_FREE:
+        where = f"{file}:{block['line']}" if block.get("line") else file
+        return (f"{where} {rule}. Fix the file or add '{file}:{rule}' to mini-projects/{slug}/.harness/scan-allow, "
+                f"then {retry or f'/go {slug}'}")
+    return _then(str(block.get("message") or "the save point failed").rstrip("."), retry or f"/go {slug}")
+
+
+def save_point(proj, event, now, retry=False):
+    """Run checkpoint.py for `event` in this trusted process (a command template's, never an agent shell's: the
+    checkpoint refuses those itself) and record its result in state.json. Returns the result. A save point that
+    cannot run at all (checkpoint.py missing, or it crashes) is a block like any other, so /go stops with the error
+    and retries it, never ends in a traceback the human can only clear by editing state.json. Imported here, not at
+    the top: copies of this library in test fixtures that never make a save point need no checkpoint.py beside them."""
+    try:
+        import checkpoint  # noqa: E402
+        res = checkpoint.checkpoint(proj, event)
+    except Exception as exc:  # noqa: BLE001  (any crash: recorded, retried by /go)
+        why = f"the save point could not run ({exc.__class__.__name__}: {exc}); /go retries it"
+        res = {"ok": False, "sha": None, "event": event, "message": why, "notes": [],
+               "block": {"event": event, "file": None, "line": None, "rule": "checkpoint", "message": why}}
+    state = load(proj)
+    apply_checkpoint(state, res, now, retry=retry)
+    save(proj, state)
+    return res
 
 
 def _drop_turn_record(proj, state):
@@ -700,59 +822,162 @@ def approved(proj):
     return milestone is not None and milestone not in (state.get("milestones_shipped") or [])
 
 
-def ship(proj, now):
-    """Record the current milestone as shipped, only when every recorded step is done and the review is a fresh
-    SHIP. Returns (recorded, one-line message)."""
+def _ship_gate(proj):
+    """Everything /ship checks before anything is recorded: (ctx, None) with ctx {state, d, cm, slug}, or (None, reason)
+    where the reason starts with `NOT RECORDED: `. Read-only."""
     try:
         state = load(proj)
     except StateError:
-        return False, f"NOT RECORDED: {unreadable_reason(proj)}"
+        return None, f"NOT RECORDED: {unreadable_reason(proj)}"
     if is_v3_state(state):
-        return False, f"NOT RECORDED: {V3_REFUSAL}"
+        return None, f"NOT RECORDED: {V3_REFUSAL}"
     slug = os.path.basename(os.path.abspath(proj))
     running = _running(proj, f"/ship {slug}")
     if running:
-        return False, f"NOT RECORDED: {running}"
+        return None, f"NOT RECORDED: {running}"
     d = docs(proj)
     if d["arch"] is None:
-        return False, _then("NOT RECORDED: " + d["errors"].get("ARCHITECTURE.md", "ARCHITECTURE.md is not valid"),
-                            f"/go {slug}")
+        return None, _then("NOT RECORDED: " + d["errors"].get("ARCHITECTURE.md", "ARCHITECTURE.md is not valid"),
+                           f"/go {slug}")
     cm = current_milestone(proj, state, d["arch"])
     if cm is None:
-        return False, _then("NOT RECORDED: every milestone is already shipped", f"/status {slug}")
+        return None, _then("NOT RECORDED: every milestone is already shipped", f"/status {slug}")
     if not approved(proj):
-        return False, (f"NOT RECORDED: {cm} has no current approval (a document changed since /approve, or it was "
-                       f"never typed): /approve {slug}")
+        return None, (f"NOT RECORDED: {cm} has no current approval (a document changed since /approve, or it was "
+                      f"never typed): /approve {slug}")
     steps = [s for s in state.get("steps", []) if isinstance(s, dict)]
     if not steps or any(s.get("milestone") != cm for s in steps):
-        return False, f"NOT RECORDED: the recorded steps are not for {cm}: /approve {slug}"
+        return None, f"NOT RECORDED: the recorded steps are not for {cm}: /approve {slug}"
     if state.get("critique_requested") is not None:  # I1: /critique at SHIP (H26) runs before the milestone ships
         problem, latest = _critique_problem(d, state, cm)
         if problem:
-            return False, f"NOT RECORDED: a critique round you asked for has not run: /go {slug}"
+            return None, f"NOT RECORDED: a critique round you asked for has not run: /go {slug}"
         unanswered = _unanswered(proj, d, latest)
         if unanswered:
-            return False, (f"NOT RECORDED: the critique round you asked for is not answered "
-                           f"({'; '.join(unanswered)}): /go {slug}")
+            return None, (f"NOT RECORDED: the critique round you asked for is not answered "
+                          f"({'; '.join(unanswered)}): /go {slug}")
     now_stage = stage(proj)  # one source of truth: record only when the stage table says SHIP
     if now_stage["stage"] != "SHIP":
-        return False, _then(f"NOT RECORDED: stage is {now_stage['stage']}: {now_stage['reason']}", f"/go {slug}")
+        return None, _then(f"NOT RECORDED: stage is {now_stage['stage']}: {now_stage['reason']}", f"/go {slug}")
     try:  # /ship's checklist item 2 needs this section: the same test as its awk (case-sensitive, at a line start)
         blind = re.search(r"^## Blind spots", _read(proj, "REVIEW.md") or "", re.M)
     except hd.DocError:
         blind = None
     if not blind:
-        return False, (f"NOT RECORDED: REVIEW.md has no '## Blind spots' section (what the review could not check): "
-                       f"/review {slug}, then /ship {slug}")
+        return None, (f"NOT RECORDED: REVIEW.md has no '## Blind spots' section (what the review could not check): "
+                      f"/review {slug}, then /ship {slug}")
+    return {"state": state, "d": d, "cm": cm, "slug": slug}, None
+
+
+def _record_shipped(proj, state, cm, d, slug, checkpoint_res=None, now=None):
+    """Record `cm` as shipped (and, from /ship yes, the ship save point); returns the one-line message."""
     state["milestones_shipped"] = [*(state.get("milestones_shipped") or []), cm]
     state["critique_requested"] = None
+    if checkpoint_res is not None:  # the ship save point covers the whole tree: it supersedes an older block
+        apply_checkpoint(state, checkpoint_res, now, retry=True)
     _drop_turn_record(proj, state)
     save(proj, state)
-    _archive_requests(proj, cm)
     nxt = current_milestone(proj, state, d["arch"])
     if nxt is None:
-        return True, f"MILESTONE SHIPPED: {cm}. All milestones shipped."
-    return True, f"MILESTONE SHIPPED: {cm}. Next: /go {slug} plans {nxt}."
+        return f"MILESTONE SHIPPED: {cm}. All milestones shipped."
+    return f"MILESTONE SHIPPED: {cm}. Next: /go {slug} plans {nxt}."
+
+
+def ship(proj, now):
+    """TEST-ONLY record primitive: records the milestone with no commit and no tag. Production code must never call it
+    (`ship_yes` is what /ship yes runs). Records only when every recorded step is done and the review is a fresh SHIP;
+    requests are archived first. Returns (recorded, one-line message)."""
+    ctx, why = _ship_gate(proj)
+    if ctx is None:
+        return False, why
+    _archive_requests(proj, ctx["cm"])
+    return True, _record_shipped(proj, ctx["state"], ctx["cm"], ctx["d"], ctx["slug"])
+
+
+def ship_yes(proj, now):
+    """`/ship yes` (spec 5.1): re-check SHIP, archive the milestone's requests (idempotent), the final save point
+    `ship M<n>`, the tag `m<n>`, then record the milestone shipped. Any failure records nothing (a commit already made
+    stays, and a retry skips what is done: nothing to stage is ok, a tag at HEAD is ok). Returns (recorded, message)."""
+    import checkpoint  # lazily, as save_point does
+    if checkpoint._agent_shell():
+        return False, "NOT RECORDED: shipping comes only from the human typing /ship <slug> yes, never from an agent shell"
+    ctx, why = _ship_gate(proj)
+    if ctx is None:
+        return False, why
+    cm, slug, d = ctx["cm"], ctx["slug"], ctx["d"]
+    proj = os.path.abspath(proj)
+    n = int(cm[1:])
+    title = next((m["title"] for m in d["arch"]["milestones"] if m["id"] == cm), cm)
+    retry = f"/ship {slug} yes"
+    if not checkpoint.own_repo(proj):  # before anything moves: a project without its own .git is never touched
+        return False, (f"NOT RECORDED: mini-projects/{slug} is not its own git repository (git init inside the project "
+                       f"first, then {retry})")
+    try:
+        tagged = checkpoint.tag_commit(proj, f"m{n}")
+        head = checkpoint.git(proj, "rev-parse", "-q", "--verify", "HEAD", check=False).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"NOT RECORDED: git could not run: {exc}"
+    if tagged and tagged != head:  # refuse before the ship commit lands on top of it
+        return False, (f"NOT RECORDED: tag m{n} already points at {tagged[:7]}, not at the current commit: a milestone "
+                       f"ships once (delete the tag by hand only if you are sure, then {retry})")
+    _archive_requests(proj, cm)
+    res = checkpoint.checkpoint(proj, {"kind": "ship", "milestone": cm})
+    if not res["ok"]:
+        return False, f"NOT RECORDED: save point blocked: {block_reason(res['block'], slug, retry)}"
+    tag = checkpoint.tag_milestone(proj, n, title)
+    if not tag["ok"]:
+        return False, f"NOT RECORDED: {tag['message']}. After fixing it: {retry}"
+    # the commit the tag names (also right when nothing was left to commit), labelled as the ship save point whatever
+    # checkpoint() said ("nothing to save: ..." on a no-op or a retry)
+    saved = {**res, "sha": tag["sha"], "message": f"ship {cm}"}
+    line = _record_shipped(proj, load(proj), cm, d, slug, saved, now)
+    made = (f"SAVED: {res['message']} ({res['sha'][:7]}), tag m{n}" if res["sha"]
+            else f"SAVED: nothing new to commit, tag m{n} at {tag['sha'][:7]}")
+    return True, made + "\n" + line
+
+
+def _section(text, heading):
+    """The `## <heading>` section of `text` (the heading line and what follows up to the next `## `), as the old awk
+    printed it: case-sensitive, at a line start. [] when there is none."""
+    out, on = [], False
+    for line in (text or "").splitlines():
+        if line.startswith("## "):
+            on = line.startswith("## " + heading)
+        if on:
+            out.append(line.rstrip())
+    return out
+
+
+def ship_preview(proj):
+    """`/ship` (spec 5.1): the checklist, recording nothing. Returns (ready, text): whether /ship yes would go on, and the
+    lines to print (the verdict, the visual status, `## Blind spots`, `## Leads`, the visual items)."""
+    ctx, why = _ship_gate(proj)
+    slug = os.path.basename(os.path.abspath(proj))
+    try:
+        review = _read(proj, "REVIEW.md")
+    except hd.DocError:
+        review = None
+    out = [f"READY: {ctx['cm']} can ship. Nothing is recorded yet." if ctx else why.replace("NOT RECORDED:", "NOT READY:", 1),
+           visual_status(proj)]
+    if review is None:
+        out.append("(no REVIEW.md)")
+    for heading, none in (("Blind spots", "(none printed)"), ("Leads", "(none)")):
+        out += _section(review, heading) or [f"## {heading}", none]
+    items = visual_items(proj)
+    if items:
+        out += ["## Visual items (accept each, or turn it into a step)", *(f"- {i}" for i in items)]
+    if ctx:
+        out.append(f"To commit, tag m{ctx['cm'][1:]} and record the milestone, type: /ship {slug} yes")
+    return ctx is not None, "\n".join(out)
+
+
+def ship_target(workshop, text):
+    """The /ship template's argument: `[slug] [yes]`. Returns ("<slug> preview|yes", "") or (None, error); sets the current
+    project like every command that names one."""
+    parts = (text or "").split()
+    yes = bool(parts) and parts[-1].lower() == "yes"
+    out, err = resolve_command(workshop, " ".join(parts[:-1] if yes else parts))
+    return (None, err) if out is None else (f"{out.strip()} {'yes' if yes else 'preview'}", "")
 
 
 # --- tree hash ----------------------------------------------------------------------------
@@ -817,16 +1042,36 @@ def tests_sha256(proj):
 
 # --- review + phase -----------------------------------------------------------------------
 
-def review_verdict(proj):
-    """SHIP / FIX FIRST / REWORK from REVIEW.md, else None."""
+def hunt_gaps(text):
+    """The HUNT_LENSES with no `- <lens>: checked ...` or `- <lens>: see ...` line in a REVIEW.md text (spec 6)."""
+    lines = [l.strip() for l in (text or "").splitlines()]
+    return [lens for lens in HUNT_LENSES
+            if not any(re.match(rf"^- {re.escape(lens)}: (checked .+|see .+)$", l, re.I) for l in lines)]
+
+
+def _review_text(proj):
     try:
         with open(os.path.join(proj, "REVIEW.md"), "r", encoding="utf-8", errors="replace") as fh:
-            text = fh.read()
+            return fh.read()
     except OSError:
+        return None
+
+
+def review_verdict(proj):
+    """SHIP / FIX FIRST / REWORK from REVIEW.md, else None (also None while its ## Hunt lacks a lens line)."""
+    text = _review_text(proj)
+    if text is None or hunt_gaps(text):
         return None
     m = re.search(r"VERDICT:\s*[*`]*\s*([A-Za-z ]+)", text, re.I)
     verdict = " ".join(m.group(1).upper().split()) if m else ""
     return verdict if verdict in VERDICTS else None
+
+
+def review_problem(proj):
+    """Why a REVIEW.md that exists records no verdict because of its ## Hunt, else None (status prints it)."""
+    text = _review_text(proj)
+    gaps = hunt_gaps(text) if text is not None else []
+    return f"REVIEW.md: ## Hunt is missing a line for: {', '.join(gaps)}" if gaps else None
 
 
 # --- v4 stage table ------------------------------------------------------------------------
@@ -956,6 +1201,8 @@ def stage(proj):
         fail = state.get("scope_failure") or {}
         why = (f": files changed outside the turn's scope: {', '.join(fail['paths'][:10])}"
                if fail.get("stage") == res["stage"] and fail.get("paths") else "")
+        if res["stage"] == "REVIEW" and not why:
+            why = f": {review_problem(proj) or 'REVIEW.md has no recorded verdict'}"
         return _stage_result("STUCK", f"stage {res['stage']} failed {n} times{why}. Fix the cause, then /go retry",
                              res["step"], done_n, total_n, cm)
     return res
@@ -963,27 +1210,12 @@ def stage(proj):
 
 # --- v4 build stages (spec 3.1 rows 9a-9l) ---------------------------------------------------
 
-def ready_steps(steps, open_steps, limit=MAX_PARALLEL):
-    """Steps that may start now, in step order: not done, every `after` done (default: the previous step), not held
-    by an open request, and sharing no path or folder with a step already picked. A step whose `after` is not done
-    blocks only itself."""
-    done = {s.get("n") for s in steps if s.get("done_at")}
-    picked, taken = [], []
-    for i, s in enumerate(steps):
-        if len(picked) >= limit:
-            break
-        if s.get("done_at") or s.get("n") in open_steps:
-            continue
-        after = s.get("after")
-        need = [steps[i - 1].get("n")] if after is None and i > 0 else (after or [])
-        if any(n not in done for n in need):
-            continue
-        files = [f for f in (s.get("files") or []) if isinstance(f, str)]
-        if any(hd.paths_overlap(f, g) for f in files for g in taken):
-            continue
-        picked.append(s)
-        taken.extend(files)
-    return picked
+def next_step(steps, open_steps):
+    """The lowest-numbered step that is not done and not held by an open request, or None (one step per turn)."""
+    for s in steps:
+        if not s.get("done_at") and s.get("n") not in open_steps:
+            return s
+    return None
 
 
 def requests(proj, state):
@@ -1035,6 +1267,76 @@ def _must(d, cm):
     return {f["id"] for f in d["brief"]["features"] if f["priority"] == "MUST"} & set(covers)
 
 
+def visual_capped(state, cm):
+    """True when the inspector has been issued VISUAL_RUN_CAP visual runs for milestone cm: VERIFY no longer issues it."""
+    runs = state.get("visual_runs")
+    return isinstance(runs, dict) and (runs.get(cm) or 0) >= VISUAL_RUN_CAP
+
+
+def visual_unresolved(state, cm):
+    """True at the cap when no visual verdict is recorded for milestone cm (any tree): the visual check ran out of runs
+    without judging anything, so verify must not pass and the stage is STUCK."""
+    return visual_capped(state, cm) and _of(state, "visual", cm).get("verdict") is None
+
+
+def visual_needed(state, cm, tree):
+    """True when VERIFY should issue the inspector: under the cap and no MATCH/MINOR verdict is recorded for this tree."""
+    if visual_capped(state, cm):
+        return False
+    vis = _of(state, "visual", cm)
+    return not (vis.get("tree_sha256") == tree and vis.get("verdict") in ("MATCH", "MINOR"))
+
+
+def _current_milestone_of_steps(state):
+    steps = [s for s in state.get("steps", []) if isinstance(s, dict)]
+    return steps[0].get("milestone") if steps else None
+
+
+def visual_status(proj):
+    """One line for the /ship checklist (Task 9): `visual: <VERDICT> (<milestone>)`, `visual: no verdict recorded (cap
+    reached)`, `visual: no verdict recorded`, or `visual: not checked (no UI)`."""
+    try:
+        state = load(proj)
+    except StateError:
+        return "visual: no verdict recorded"
+    d = docs(proj)
+    if not (d["brief"] and d["brief"]["ui"]):
+        return "visual: not checked (no UI)"
+    cm = _current_milestone_of_steps(state)
+    verdict = _of(state, "visual", cm).get("verdict")
+    if verdict is not None:
+        return f"visual: {verdict} ({cm})"
+    return "visual: no verdict recorded (cap reached)" if visual_capped(state, cm) else "visual: no verdict recorded"
+
+
+def visual_items(proj):
+    """Every list item in VISUAL.md, for the /ship checklist: `- ` / `* ` bullets and numbered `1. ` / `1) ` items, marker
+    stripped, nested items kept as their own entries, in file order. Sections are not guessed (the inspector writes per-screen
+    sections, and FIX items must never be lost), so over-listing is accepted. Only the exact verdict line parse_visual reads and empty items are left out;
+    [] when VISUAL.md is missing or its verdict was not recorded for the current milestone (a previous milestone's file
+    is stale). Task 9 calls `harness_state.visual_items(proj) -> list[str]`."""
+    try:
+        state = load(proj)
+    except StateError:
+        return []
+    cm = _current_milestone_of_steps(state)
+    if cm is None or _of(state, "visual", cm).get("verdict") is None:
+        return []
+    try:
+        with open(os.path.join(proj, "VISUAL.md"), "r", encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    out = []
+    for l in lines:
+        if hd.VISUAL_VERDICT_RE.match(l):  # exactly the line parse_visual reads as the verdict, nothing else
+            continue
+        m = re.match(r"^\s*(?:[-*]|\d+[.)])\s+(\S.*)$", l)
+        if m:
+            out.append(m.group(1).strip())
+    return out
+
+
 def _verify_gap(state, steps, tree, ui, cm, acceptance=True):
     """(kind, reason): "ok", "pending" (a result not recorded for this tree) or "failed" (a recorded failure).
     A failure outranks a gap; the reason names the first one of that kind. `acceptance`: the milestone has tests."""
@@ -1059,11 +1361,13 @@ def _verify_gap(state, steps, tree, ui, cm, acceptance=True):
         gaps.append(("pending", "the QA verdict was not recorded"))
     elif verdict != "PASS":
         gaps.append(("failed", f"the QA verdict is {verdict}"))
-    if ui:
+    if ui and visual_unresolved(state, cm):  # the cap is no silent pass: some verdict must exist for this milestone
+        gaps.append(("pending", f"the visual check ran {(state.get('visual_runs') or {}).get(cm)} times without a recorded verdict"))
+    elif ui and not visual_capped(state, cm):
         vis = _of(state, "visual", cm)
         if vis.get("tree_sha256") != tree or vis.get("verdict") is None:
             gaps.append(("pending", "the VISUAL verdict was not recorded for the current tree"))
-        elif vis["verdict"] != "MATCH":
+        elif vis["verdict"] not in ("MATCH", "MINOR"):
             gaps.append(("failed", f"the VISUAL verdict is {vis['verdict']}"))
     for kind in ("failed", "pending"):
         hit = next((g for g in gaps if g[0] == kind), None)
@@ -1074,7 +1378,7 @@ def _verify_gap(state, steps, tree, ui, cm, acceptance=True):
 
 def verify_fresh(proj, state, ui=None):
     """(True, ...) when the recorded VERIFY covers the current tree: every step check and the acceptance run exited 0,
-    the QA verdict is PASS and (ui projects) the VISUAL verdict is MATCH. Otherwise (False, the first gap)."""
+    the QA verdict is PASS and (ui projects) the VISUAL verdict is MATCH or MINOR (or the cap is reached with a verdict recorded for this milestone). Otherwise (False, the first gap)."""
     d = docs(proj)
     if ui is None:
         ui = bool(d["brief"] and d["brief"]["ui"])
@@ -1131,7 +1435,7 @@ def _post_approval(proj, state, d, slug, cm, steps):
         mine = [{"kind": "research" if r["kind"] == "RESEARCH" else "testfix", "n": r["step"]}
                 for r in reqs if r["step"] == spike.get("n")]
         return res("BUILD", f"build the spike for {spike['proves']} (step {spike.get('n')}) before any test is written",
-                   spike, mine or [{"kind": "step", "n": spike.get("n")}])
+                   spike, mine[:1] or [{"kind": "step", "n": spike.get("n")}])
 
     # 9e: acceptance tests (only when the milestone covers a MUST feature)
     if must:
@@ -1154,25 +1458,24 @@ def _post_approval(proj, state, d, slug, cm, steps):
         if tests_moved:
             return res("TESTS", "the acceptance tests changed since the recorded run: qa runs them once")
 
-    # 9f + 9g: requests first, then ready steps, at most MAX_PARALLEL in all
-    items = [{"kind": "research" if r["kind"] == "RESEARCH" else "testfix", "n": r["step"]}
-             for r in reqs][:MAX_PARALLEL]
-    # a testfix may change the tests every step is judged by: it never shares a batch with builders
-    ready = [] if any(i["kind"] == "testfix" for i in items) else ready_steps(
-        steps, {r["step"] for r in reqs}, MAX_PARALLEL - len(items))
-    batch = items + [{"kind": "step", "n": s.get("n")} for s in ready]
-    if batch:
-        first = ready[0] if ready else next((s for s in steps if s.get("n") == items[0]["n"]), None)
-        return res("BUILD", "batch: " + ", ".join(f"{i['kind']} {i['n']}" for i in batch), first, batch)
-
-    if pend:
-        return res("STUCK", f"steps {', '.join(str(s.get('n')) for s in pend)} cannot start (each waits on a step "
-                            f"that is not done): edit PLAN.md, then /approve {slug}")
+    # 9f + 9g: an open request first (the lowest step's), else the next step: one item per turn
+    if reqs:
+        r = reqs[0]
+        kind = "research" if r["kind"] == "RESEARCH" else "testfix"
+        return res("BUILD", f"{kind} {r['step']}", next((s for s in steps if s.get("n") == r["step"]), None),
+                   [{"kind": kind, "n": r["step"]}])
+    nxt = next_step(steps, set())
+    if nxt is not None:
+        return res("BUILD", f"step {nxt.get('n')}", nxt, [{"kind": "step", "n": nxt.get("n")}])
 
     if cause is not None:  # 9i
         return res("FIX", f"{cause}: the builder fixes it (round {rounds + 1} of {FIX_LIMIT})")
+    if not pend and ui and visual_unresolved(state, cm):  # the visual cap ran out with no verdict: a human decides
+        return res("STUCK", f"VISUAL: the visual check ran {(state.get('visual_runs') or {}).get(cm)} times without a "
+                            f"recorded verdict. Read VISUAL.md, fix what blocked it, then /approve {slug} to reset the "
+                            f"visual runs and /go {slug}")
     if vkind != "ok":  # 9j
-        return res("VERIFY", f"{vwhy}: qa runs the project's checks" + (", then the designer compares" if ui else ""))
+        return res("VERIFY", f"{vwhy}: qa runs the project's checks" + (", then the inspector compares" if ui and visual_needed(state, cm, tree) else ""))
     if not rev_fresh:  # 9k
         return res("REVIEW", "no fresh review: the reviewer writes REVIEW.md")
     return res("SHIP", f"review is fresh and says SHIP: /ship {slug}")  # 9l
@@ -1317,9 +1620,22 @@ def main(argv):
             return 1
         sys.stdout.write(out)
         return 0
-    if len(argv) != 3 or argv[1] not in ("approve", "ship", "approved", "tree", "review"):
-        print("usage: harness_state.py approve|ship|approved|tree|review <project-dir> | current <workshop> [slug] | "
-              "resolve <text>", file=sys.stderr)
+    if len(argv) == 3 and argv[1] == "shiptarget":
+        # shiptarget <text>: "<slug> preview|yes" for the /ship template (sets the current project): human only
+        if os.environ.get("AGENT") == "1" or os.environ.get("OPENCODE_SESSION_ID"):
+            print("REFUSED: the current project is set by the human's command, never from an agent shell.",
+                  file=sys.stderr)
+            return 3
+        out, err = ship_target(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), argv[2])
+        if out is None:
+            print(err, file=sys.stderr)
+            return 1
+        print(out)
+        return 0
+    ship_form = len(argv) == 4 and argv[1] == "ship" and argv[3] in ("yes", "preview")
+    if not (len(argv) == 3 or ship_form) or argv[1] not in ("approve", "ship", "approved", "tree", "review"):
+        print("usage: harness_state.py approve|ship|approved|tree|review <project-dir> [yes] | current <workshop> "
+              "[slug] | resolve <text> | shiptarget <text>", file=sys.stderr)
         return 2
     cmd, proj = argv[1], os.path.abspath(argv[2])
     if cmd == "tree":
@@ -1351,8 +1667,11 @@ def main(argv):
         if not direct or slug.startswith("_") or not os.path.isdir(proj):
             print("REFUSED: ship works on a project directly under this workshop's mini-projects/.")
             return 1
+        if argv[3:] != ["yes"]:  # /ship: the checklist, nothing recorded
+            print(ship_preview(proj)[1])
+            return 0
         try:
-            ok, msg = ship(proj, now)
+            ok, msg = ship_yes(proj, now)
         except OSError as exc:
             print(f"REFUSED: cannot write state: {exc}")
             return 1
@@ -1370,6 +1689,17 @@ def main(argv):
     print(f"APPROVED: mini-projects/{slug} {state['steps'][0]['milestone']} (BRIEF + ARCHITECTURE{design} + PLAN, "
           f"sha256 {state['approved_sha256'][:12]}, {len(state['steps'])} steps). "
           "Any edit to these files revokes this; /approve again after a change.")
+    # the first save point (spec 4.1): the approved documents, committed by trusted code. The approval stands even
+    # when the save point is blocked: the block stops the next /go, which retries it
+    try:
+        res = save_point(proj, {"kind": "approved", "sha12": state["approved_sha256"][:12]}, now)
+    except (OSError, StateError) as exc:
+        print(f"SAVE POINT NOT RECORDED: {exc}. Run /approve {slug} again")
+        return 0
+    if not res["ok"]:
+        print(f"SAVE POINT BLOCKED: {block_reason(res['block'], slug)}")
+    elif res["sha"]:
+        print(f"SAVED: {res['message']} ({res['sha'][:7]})")
     return 0
 
 

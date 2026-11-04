@@ -20,13 +20,12 @@ RULES = os.path.join(BRAIN, "rules")
 RUNTIME = os.path.join(WORKSHOP, ".harness")
 
 AGENTS = ["orchestrator", "brainstormer", "architect", "planner", "builder", "reviewer", "critic", "researcher",
-          "qa", "designer"]
-COMMANDS = ["new", "go", "approve", "ship", "status", "critique", "hunt", "review", "research", "brainstorm", "stop"]
+          "qa", "designer", "inspector"]
+COMMANDS = ["new", "go", "approve", "ship", "status", "critique", "review", "research", "brainstorm", "stop", "undo",
+            "deploy", "publish"]
 SKILLS = ["caveman", "browser", "visual-review", "html2md", "spec", "brain", "verify"]
-# review kit (installed 2026-10-23). These agents have strict machine-read output formats
-# (BUG-n blocks), so they do NOT use the DID/BASIS contract the 10 above carry. (v3: the kit's
-# code-reviewer is merged into reviewer, which writes REVIEW.md and does carry the contract.)
-KIT_AGENTS = ["hunter", "skeptic"]
+# review kit agents: none since piece 3 (hunter and skeptic were cut); the list stays for the bench loops.
+KIT_AGENTS = []
 KIT_SKILLS = ["bug-hunt", "code-review"]
 ALL_AGENTS = AGENTS + KIT_AGENTS
 ALL_COMMANDS = COMMANDS
@@ -124,7 +123,7 @@ for c in cmd_files:
     if target and (target in DISABLED or (target not in agent_files and target not in BUILTIN_OK)):
         bad_agent.append(f"{c}->{target}")
     if target == "orchestrator":
-        # workers are named either "@name" or "launch/spawn/delegate to `name`" (as /hunt does)
+        # workers are named either "@name" or "launch/spawn/delegate to `name`" (as a command may)
         named = set(re.findall(r"@([a-z][a-z-]*)", body))
         named |= set(re.findall(r"(?:launch|spawn|delegate to|run)\s+`([a-z][a-z-]*)`", body, re.I))
         for w in named:
@@ -271,7 +270,7 @@ check("builder-cannot-write-gate-files", "builder edit denies the doc files, .en
 # --- every doc file has one owner (spec 7.2 rule 10): the ship gate trusts a REVIEW.md written by a write tool,
 #     the plan gate and the approval hash trust BRIEF/ARCHITECTURE/PLAN/CRITIQUE, and the plugin does not know
 #     which agent writes. So every agent opencode really loaded (custom and built-in) must resolve each file to
-#     deny, its owner to allow (QA.md: qa; DESIGN.md and VISUAL.md: designer).
+#     deny, its owner to allow (QA.md: qa; DESIGN.md: designer; VISUAL.md: inspector).
 #     This covers the edit/write tools only. Shell writes (`> PLAN.md`, cp, mv, ln, interpreters) to the project
 #     root's doc files are refused for every agent by scripts/sandbox/agent.sb, proven by gate cases x41-x58 (gates-fire).
 # (--standalone: a private server reads the files on disk; the background service may hold a stale opencode.json)
@@ -292,7 +291,7 @@ def resolve(perms, action, resource):
 
 DOC_OWNER = {"REVIEW.md": "reviewer", "BRIEF.md": "brainstormer", "BRAINSTORM.md": "brainstormer",
              "ARCHITECTURE.md": "architect", "PLAN.md": "planner", "CRITIQUE.md": "critic",
-             "BUGHUNT.md": "orchestrator", "DESIGN.md": "designer", "QA.md": "qa", "VISUAL.md": "designer"}
+             "BUGHUNT.md": None, "DESIGN.md": "designer", "QA.md": "qa", "VISUAL.md": "inspector"}
 loaded_ids = {a.get("id") for a in loaded}
 no_owner = sorted({o for o in DOC_OWNER.values() if o and o not in loaded_ids})
 own_bad = [f"{a.get('id')}:{p}={resolve(a.get('permissions', []), 'edit', p)}"
@@ -303,6 +302,26 @@ check("only-owner-writes-docs", "edit tools: each doc file writable by its owner
       "could not run `opencode debug agents`" if not loaded else
       ",".join([f"owner not loaded:{o}" for o in no_owner] + own_bad[:6]))
 
+# R30/R31: opencode's own tools that move or rename sessions, make worktrees or read MCP resources are hidden from
+# every agent, as opencode really resolved it: Tool.snapshot hides a tool when the last rule matching its id
+# (opencode_<name>; core/src/tool.ts:255, tool/runtime.ts:275-278) is `<id> * deny`. worktree_remove declares
+# `permission: "edit"`, so no key hides it; the plugin's refusal is its only control (gate-test ses4).
+HIDDEN_TOOLS = ("opencode_session_move", "opencode_session_rename", "opencode_worktree_create",
+                "opencode_list_mcp_resources", "opencode_read_mcp_resource")
+
+
+def hidden(perms, tool_id):
+    last = None
+    for r in perms:
+        if wildcard(tool_id, r.get("action", "")):
+            last = r
+    return bool(last) and last.get("resource") == "*" and last.get("effect") == "deny"
+
+
+shown = [f"{a.get('id')}:{t}" for a in loaded for t in HIDDEN_TOOLS if not hidden(a.get("permissions", []), t)]
+check("session-tools-off", "opencode's session-move/rename, worktree_create and MCP resource tools hidden from every agent",
+      bool(loaded) and not shown, "could not run `opencode debug agents`" if not loaded else ",".join(shown[:6]))
+
 # --- fact probes (spec 6.5): the read-only agents may run exactly these version/location commands, so a model
 #     checks "is node installed?" itself instead of paying the researcher. Exact lines (no trailing `*`), so a
 #     chain such as `git --version; rm x` matches no allow line and resolves to deny; `which *` and `ls*` take
@@ -312,7 +331,7 @@ PROBE_ALLOW = ["git --version", "node --version", "npm --version", "npx --versio
 PROBE_DENY = ["git --version; rm x", "node --version && rm x", "npm --version; rm x", "npx --version; rm x",
               "python3 --version; rm x", "python3 -c 1", "node -e 1", "npm install", "npx cowsay"]
 PROBE_AGENTS = ["architect", "planner", "critic", "brainstormer", "reviewer", "orchestrator", "designer",
-                "researcher"]
+                "inspector", "researcher"]
 probe_bad = []
 for a in PROBE_AGENTS:
     perms = next((x.get("permissions", []) for x in loaded if x.get("id") == a), None)
@@ -324,13 +343,27 @@ for a in PROBE_AGENTS:
 check("probes-exact", "read-only agents allow exactly the fact probes, and not a chain behind one",
       bool(loaded) and not probe_bad, "could not run `opencode debug agents`" if not loaded else ",".join(probe_bad[:6]))
 
+# --- the reviewer's repro probes (piece 3 spec 6): resolved rules as loaded, last match wins. Plain scripts in
+#     .review/ may run and be written; a project file or a chain behind a probe may not; the bug-hunt skill is open.
+REVIEWER_ALLOW = [("shell", "python3 .review/probe.py"), ("shell", "node .review/probe.js"),
+                  ("edit", ".review/probe.py"), ("edit", "mini-projects/demo/.review/probe.py"), ("skill", "bug-hunt")]
+REVIEWER_DENY = [("shell", "python3 src/x.py"), ("shell", "node src/x.js"), ("shell", "python3 -c 1"),
+                 ("edit", "src/x.py"), ("edit", "mini-projects/demo/src/x.py"), ("skill", "debug")]
+rv = next((x for x in loaded if x.get("id") == "reviewer"), None)
+rv_perms = (rv or {}).get("permissions", [])
+rv_bad = [] if rv else ["reviewer:not loaded"]
+rv_bad += [f"{a}:{c}={resolve(rv_perms, a, c)}" for a, c in REVIEWER_ALLOW if resolve(rv_perms, a, c) != "allow"] if rv else []
+rv_bad += [f"{a}:{c}={resolve(rv_perms, a, c)}" for a, c in REVIEWER_DENY if resolve(rv_perms, a, c) == "allow"] if rv else []
+check("reviewer-probes", "reviewer: python3/node .review/* and .review/** writes allowed, project scripts and src writes denied",
+      bool(loaded) and not rv_bad, "could not run `opencode debug agents`" if not loaded else ",".join(rv_bad[:6]))
+
 # --- the browser (piece 2 spec 6.3): tools that read files, run page code or change what the gate cannot check are
-#     denied for the designer (all of `playwright_*` otherwise) and the researcher (a short allowlist). Resolved rules
+#     denied for the inspector (all of `playwright_*` otherwise) and the researcher (a short allowlist). Resolved rules
 #     as loaded, last match wins. Names are the Playwright MCP 0.0.83 tools (file_upload and drop read local files).
 BROWSER_DENY = ["evaluate", "run_code_unsafe", "route", "file_upload", "drop", "install"]
-BROWSER_ALLOW = {"designer": ["navigate", "take_screenshot", "snapshot", "click"],
+BROWSER_ALLOW = {"inspector": ["navigate", "take_screenshot", "snapshot", "click"], "designer": [],
                  "researcher": ["navigate", "snapshot", "take_screenshot", "click", "type", "wait_for", "close", "resize"]}
-BROWSER_DENY_EXTRA = {"researcher": ["tabs", "hover", "fill_form"], "designer": []}
+BROWSER_DENY_EXTRA = {"researcher": ["tabs", "hover", "fill_form"], "inspector": [], "designer": ["navigate", "take_screenshot", "snapshot", "click"]}
 browser_bad = []
 for a, allowed in BROWSER_ALLOW.items():
     perms = next((x.get("permissions", []) for x in loaded if x.get("id") == a), None)
@@ -342,7 +375,7 @@ for a, allowed in BROWSER_ALLOW.items():
     browser_bad += [f"{a}:{t}={resolve(perms, 'playwright_browser_' + t, '*')}"
                     for t in BROWSER_DENY + BROWSER_DENY_EXTRA[a]
                     if resolve(perms, "playwright_browser_" + t, "*") != "deny"]
-check("browser-tools", "designer and researcher: risky Playwright tools denied, the needed ones allowed",
+check("browser-tools", "inspector and researcher: risky Playwright tools denied, the needed ones allowed; the designer has no browser",
       bool(loaded) and not browser_bad, "could not run `opencode debug agents`" if not loaded else ",".join(browser_bad[:6]))
 
 # --- the orchestrator's shell runs status.py in text mode only (digest + file checks, spec H2): --html writes a
@@ -352,7 +385,7 @@ status_probes = {"python3 scripts/status.py demo": "allow", "python3 scripts/sta
                  "python3 scripts/status.py --html": "deny", "python3 scripts/status.py demo --html": "deny",
                  "python3 scripts/next.py demo": "deny", 'python3 -c "print(1)"': "deny"}
 status_bad = []
-for a in ["orchestrator", "architect", "designer", "planner", "critic"]:
+for a in ["orchestrator", "architect", "designer", "inspector", "planner", "critic"]:
     perms = next((x.get("permissions", []) for x in loaded if x.get("id") == a), None)
     if perms is None:
         status_bad.append(f"{a}:not loaded")

@@ -52,7 +52,7 @@ for d in agents commands skills plugins brain; do
   if [ -d "$gdir/$d" ]; then bad "global harness folder found: $gdir/$d - remove it (the harness lives in this repo only)"; fi
 done
 
-# v3 runs the orchestrator, planner, builder, reviewer, hunter and brain on Anthropic Claude. The key lives in
+# v3 runs the orchestrator, planner, builder, reviewer and brain on Anthropic Claude. The key lives in
 # opencode's auth store (outside the repo). Only the provider line is checked; the credential is never read or shown.
 # Captured first: `grep -q` stops reading at the first match, sed then dies of SIGPIPE, and pipefail made that a WARN.
 auth_list="$(opencode auth list 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"

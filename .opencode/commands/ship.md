@@ -1,20 +1,18 @@
 ---
-description: Ship checklist (/ship [slug]; no slug means the current project). You commit, push and publish yourself.
+description: Ship checklist (/ship [slug]), then /ship [slug] yes commits, tags and records the milestone. No slug means the current project.
 agent: orchestrator
 ---
-Project argument: "$ARGUMENTS" (empty means the current project). The status script already ran when the human typed this command; its output (if it printed no status line, there is no such project: relay what it printed and stop):
+Arguments: "$ARGUMENTS" (`[slug]`, or `[slug] yes`; no slug means the current project). The script already ran when the human typed this command; its output (if it printed no status line, there is no such project: relay what it printed and stop):
 
-!`S="$(python3 scripts/harness_state.py resolve "$ARGUMENTS")" && { python3 scripts/status.py "$S"; python3 scripts/harness_state.py ship "mini-projects/$S"; }; python3 scripts/status.py --html >/dev/null 2>&1; true`
+!`R="$(python3 scripts/harness_state.py shiptarget "$ARGUMENTS")" && S="${R% *}" && M="${R##* }" && { python3 scripts/status.py "$S"; python3 scripts/harness_state.py ship "mini-projects/$S" "$M"; [ "$M" = yes ] || { echo "git status --short:"; git -c core.fsmonitor=false -c safe.bareRepository=explicit -C "mini-projects/$S" status --short 2>&1; }; }; python3 scripts/status.py --html >/dev/null 2>&1; true`
 
-The review's blind spots and the project's `git status --short`, printed by the same template:
+Run no shell and write nothing. Everything you need is printed above.
 
-!`S="$(python3 scripts/harness_state.py resolve "$ARGUMENTS")" && { awk '/^## /{p=/^## Blind spots/} p' "mini-projects/$S/REVIEW.md" 2>/dev/null || echo "(no REVIEW.md)"; echo "git status --short:"; git -c core.fsmonitor=false -c safe.bareRepository=explicit -C "mini-projects/$S" status --short 2>&1; }; true`
+**Without `yes`** (the checklist; nothing was recorded). Below, <slug> is the project named in the first status line. Fail fast, name the failed item, give the one command that fixes it:
+1. The READY / NOT READY line (it follows the status lines) says READY. If it says NOT READY, stop: give the command it ends with. That line is the freshness check; you do not judge it. Also show the `visual:` line.
+2. Show the `## Blind spots` section and the `## Leads` section (leads are unproven suspicions from the review: they never block). Ask the human to accept those risks, or to name an owner or a step for any lead. Blind spots printed as "(none printed)" = item 2 fails: run /review to review again, then /ship.
+3. Show the `## Visual items` if printed: the human accepts each or turns it into a step.
+4. The `git status --short` lines show no .env, secrets or node_modules (the secret scan also runs at `yes`, and blocks).
+All pass: tell the human to type `/ship <slug> yes`. That one command commits the whole tree as the save point `ship M<n>`, tags it `m<n>`, and records the milestone; the human no longer commits by hand. Push and publish stay human-only (`/publish`).
 
-Below, <slug> is the project named in the first status line. Checklist. Everything you need is printed above: run no shell. Fail fast, name the failed item, give the one command that fixes it:
-1. The first status line says SHIP (every step done, fresh review, verdict SHIP). If not, stop and give its `next:` command. That line is the freshness check for the human's commit; you do not judge it. Also relay the last line of that output word for word (MILESTONE SHIPPED, NOT RECORDED or v3 project): code records the milestone, never you.
-2. Show the `## Blind spots` section above. Ask the human to accept those risks or name an owner. None printed = item 2 fails: run /review to review again, then /ship.
-3. The `git status --short` lines above show no .env, secrets or node_modules.
-
-Once the MILESTONE SHIPPED line has printed, the milestone is recorded. If item 2 or 3 then fails, tell the human plainly: fix it, then commit by hand; the record stays (piece 1 has no way back to that milestone).
-
-All pass: show the exact commit message and the exact git commands to run in `mini-projects/<slug>` (`git add ...`, `git commit -m ...`). THE HUMAN runs them (agents cannot write `.git`), before editing any code: nothing re-checks the review at that point. Push and publish are human-only too: denied for every agent.
+**With `yes`** (the output above is the result): relay it word for word. If it says MILESTONE SHIPPED, the commit, the tag and the record are done: say what the next command is (it is on that line). If it says NOT RECORDED, nothing was recorded: relay the reason and the one command that fixes it, and add that `/ship <slug> yes` is safe to type again (a commit or tag that already exists is skipped).

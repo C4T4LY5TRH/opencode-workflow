@@ -86,13 +86,12 @@
     "architect": { "model": "anthropic/claude-opus-5-5" },
     "planner": { "model": "anthropic/claude-sonnet-5-5" },
     "builder": { "model": "anthropic/claude-sonnet-5-5" },
-    "reviewer": { "model": "anthropic/claude-sonnet-5-5" },
+    "reviewer": { "model": "anthropic/claude-opus-5-5" },
     "critic": { "model": "anthropic/claude-sonnet-5-5" },
-    "hunter": { "model": "anthropic/claude-sonnet-5-5" },
-    "skeptic": { "model": "opencode/deepseek-v4.1-flash-free" },
     "researcher": { "model": "anthropic/claude-haiku-5-5" },
     "qa": { "model": "anthropic/claude-sonnet-5-5" },
     "designer": { "model": "anthropic/claude-opus-5-5" },
+    "inspector": { "model": "anthropic/claude-sonnet-5-5" },
     "build": { "disable": true },
     "general": { "disable": true },
     "explore": {
@@ -109,6 +108,11 @@
   },
   "permission": {
     "execute": "deny",
+    "opencode_session_move": "deny",
+    "opencode_session_rename": "deny",
+    "opencode_worktree_create": "deny",
+    "opencode_list_mcp_resources": "deny",
+    "opencode_read_mcp_resource": "deny",
     "playwright_*": "deny",
     "shell": {
       "*": "ask",

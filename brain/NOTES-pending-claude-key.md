@@ -4,23 +4,19 @@ All agent models live in ONE place: `.opencode/opencode.json` -> `agent.<name>.m
 Agent files carry no `model:` line: a `model:` line in an agent `.md` silently wins over opencode.json
 (spec §14.1 fact 2), and the bench check `models-one-place` fails if one comes back.
 
-Current (v4, 2026-10-30). Claude for the hard roles (Anthropic API key, `opencode auth login`), a free
-OpenCode Zen model for one checking role (skeptic):
+Current (v4, 2026-10-30). Claude for the hard roles (Anthropic API key, `opencode auth login`):
 - orchestrator: anthropic/claude-haiku-5-5 (runs the /go chains; fallback Sonnet if it handles them poorly)
 - brainstormer: anthropic/claude-sonnet-5-5 (v4, new)
 - architect: anthropic/claude-opus-5-5 (v4, new: the one Opus role, the hardest decisions)
 - planner: anthropic/claude-sonnet-5-5
 - builder: anthropic/claude-sonnet-5-5
-- hunter: anthropic/claude-sonnet-5-5
 - reviewer: anthropic/claude-sonnet-5-5 (was opencode/flint-40b-free until the 2026-10-25 live run, where the free
   usage limit stalled /go's review; then Haiku, unsteady on identical code (v4 spec §14.1); Sonnet since 2026-10-30)
-- skeptic: opencode/deepseek-v4.1-flash-free (fixture-test winner; a different family from the hunter on purpose)
 - critic: anthropic/claude-sonnet-5-5 (was opencode/nemotron-3-ultra-free, which disappeared on 2026-10-29)
 - researcher: anthropic/claude-haiku-5-5 (was opencode/nemotron-3.5-super-vl-free until the 2026-10-30 acceptance
   run, where its free usage limit failed the brainstorm's research step; Haiku also reads screenshots)
 
-Families: Claude designs, builds and hunts; a non-Claude model verifies bugs (skeptic), so that checker does not share
-the builder's blind spots. Since 2026-10-25 the reviewer is Claude (free limits stalled the loop;
+Families: Claude designs, builds and reviews. Since 2026-10-25 the reviewer is Claude (free limits stalled the loop;
 Haiku first, Sonnet since 2026-10-30 because the Haiku reviewer was unsteady), since v4 the critic is Claude Sonnet
 (its free model disappeared; v4 spec §3), and since the v4 acceptance run the researcher is Claude Haiku (free
 limit): those trades were the human's call.

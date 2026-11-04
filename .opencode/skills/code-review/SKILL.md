@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Structured code review of a diff, branch or PR for engineering health — spec compliance, design and system boundaries, readability, test coverage, security hygiene and evidenced performance issues. Use whenever asked to review, critique, audit or sign off code changes, a PR, a diff, or "what I just wrote". Not for deep defect hunting — suspected bugs go to the bug-hunt skill as leads.
+description: Structured code review of a diff, branch or PR for engineering health — spec compliance, design and system boundaries, readability, test coverage, security hygiene and evidenced performance issues. Use whenever asked to review, critique, audit or sign off code changes, a PR, a diff, or "what I just wrote". Pass 1 of the reviewer's two passes; deep defect hunting is pass 2 (bug-hunt).
 compatibility: opencode
 ---
 
@@ -16,7 +16,7 @@ Your job: decide whether it is safe to merge, and what must change first.
 4. Max 5 NITs. Keep the 5 with the highest payoff.
 5. Zero BLOCKER/MAJOR findings is a valid outcome. Never invent issues to look thorough.
 6. Never edit files. Fixes go in the report.
-7. A suspected logic defect you can't prove quickly becomes a **Bug lead**, not a finding. The hunter owns proof.
+7. A suspected logic defect you can't prove quickly becomes a **Lead**, not a finding. Pass 2 (the bug-hunt skill) owns proof.
 
 ## Workflow
 
@@ -43,11 +43,11 @@ A diff hides its blast radius. For every changed public function, type, schema, 
 ### 5. Review by lens
 Skip a lens only if it genuinely doesn't apply, and say so under Coverage.
 
-- **Correctness (surface only):** inverted or wrong condition, unhandled error/return value, wrong variable, missing await, resource not closed. Anything needing a multi-step trace → Bug lead.
+- **Correctness (surface only):** inverted or wrong condition, unhandled error/return value, wrong variable, missing await, resource not closed. Anything needing a multi-step trace → Lead.
 - **Design & boundaries:** logic in the wrong layer (UI doing data access, domain importing framework code), new coupling across module boundaries, duplicated logic that already exists (search for it), unnecessary public API changes, contract/schema changes without migration.
 - **Readability:** names that lie, functions doing several jobs, comments contradicting code, dead code, magic values. Only when it will cause a future misunderstanding — not taste.
 - **Tests:** new behaviour without tests; tests that assert nothing meaningful; behaviour changed but tests unchanged (suspicious); new branches without edge-case tests.
-- **Security hygiene:** untrusted input reaching queries, shell, file paths, HTML or deserialisation; secrets in code or logs; missing authz on new endpoints; over-broad permissions; new dependencies (confirm the package exists and is maintained — typo'd names are a supply-chain risk). Exploit-depth analysis → Bug lead.
+- **Security hygiene:** untrusted input reaching queries, shell, file paths, HTML or deserialisation; secrets in code or logs; missing authz on new endpoints; over-broad permissions; new dependencies (confirm the package exists and is maintained — typo'd names are a supply-chain risk). Exploit-depth analysis → Lead.
 - **Performance (mechanism required):** work in a loop or hot path, N+1 queries, unbounded collections, sync I/O on the main/UI thread, expensive objects rebuilt per frame or request. "Could be faster" with no mechanism is not a finding.
 
 ### 6. Classify
@@ -59,29 +59,3 @@ Skip a lens only if it genuinely doesn't apply, and say so under Coverage.
 | NIT | Preference with a stated reason. Max 5 | Yes |
 
 Confidence per finding: HIGH (verified by reading all involved code) or MEDIUM (one stated assumption). Below that, it's not a finding.
-
-## Output format
-Return exactly this, nothing before or after:
-
-```
-## Verdict: REQUEST CHANGES | APPROVE WITH CHANGES | APPROVE
-<one sentence why>
-
-## Spec compliance
-1. <requirement> — MET | PARTIAL | MISSING | UNVERIFIABLE — path:line
-
-## Findings
-### [BLOCKER] <title> — path:line (confidence: HIGH)
-Problem:
-Consequence:
-Fix:
-(then MAJOR, MINOR, NIT in that order)
-
-## Bug leads (for the hunter)
-- path:line — suspicion in one line — what would confirm it
-
-## Coverage
-Reviewed: ...  Not reviewed (and why): ...  Checks run: ...
-```
-
-Verdict rule: any BLOCKER → REQUEST CHANGES. Any MAJOR → APPROVE WITH CHANGES at best.
