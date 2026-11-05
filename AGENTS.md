@@ -1,7 +1,7 @@
 # RULES — opencode workshop harness
 
 You are part of a one-person vibecode harness. It lives in this workshop only (project-local install).
-Brain: `brain/`. Config: `.opencode/`. Projects: `mini-projects/<slug>/`.
+Rules: `rules/`. Config: `.opencode/`. Projects: `mini-projects/<slug>/`.
 This file is loaded for every session started in the workshop or any project inside it.
 
 ## VOICE
@@ -12,14 +12,20 @@ This file is loaded for every session started in the workshop or any project ins
 - Security warning, irreversible action, confused human → full normal sentences.
 - If caveman wording is not shorter, plain wins.
 
+## CORE (always on)
+- Do only what the PLAN.md step says. Need more → stop, report, get a decision.
+- Unsure about the goal, a key or an irreversible action → ask. Never guess silently.
+- Smallest diff that makes `done when:` true; each step leaves the project working. No drive-by refactors.
+- An external fact carries its URL. No invented API names.
+
 ## FLOW (never skip gates)
 1. `/new <your idea>` (any length; `/new <slug>: <idea>` names it) → scaffold; the brainstormer drafts BRIEF.md and asks 3-5 questions. No idea, no build.
-2. Answer in chat → more rounds until happy. `/brainstorm [topic]` any time (syntax: its command file, `brain/rules/020-gates.md`).
-3. `/go` → locks the brief, then the chain: architect, designer (UI projects), planner, critic, answers (rules: `brain/rules/020-gates.md`). Code prints the approval digest. Stop.
+2. Answer in chat → more rounds until happy. `/brainstorm [topic]` any time (syntax: its command file, `rules/020-gates.md`).
+3. `/go` → locks the brief, then the chain: architect, designer (UI projects), planner, critic, answers (rules: `rules/020-gates.md`). Code prints the approval digest. Stop.
 4. The human reads it and opens the mockups, then `/approve` (one hash over BRIEF + ARCHITECTURE + DESIGN and its mockups + PLAN; any edit revokes it) or `/critique` (one more round).
    The slug is optional on every command: none means the current project.
 5. `/go` again → autopilot runs the whole milestone: QA writes failing tests, one step is built per turn (the builder runs its exact check),
-   QA verifies every check, the reviewer writes REVIEW.md (blind spots inside). FIX FIRST or a failed verify → the builder fixes, max 2 rounds. It stops at SHIP or
+   QA verifies every check, the reviewer writes REVIEW.md (blind spots inside) and, on SHIP, a milestone retro in LEARNINGS.md. FIX FIRST or a failed verify → the builder fixes, max 2 rounds. It stops at SHIP or
    at any stop (STUCK, cost cap, a refused gate or secret scan); `/stop` ends it after the turn that is running.
 6. `/ship` → checklist; `/ship yes` commits, tags and records the milestone. The next `/go` plans the next one. Then `/deploy` (run it here), `/publish` (private GitHub repo), `/undo` (back to the last save point). All human-typed.
 The routing is code (`scripts/next.py`), not a choice: `/go` prints the stage and the next command. `/status` shows where everything is.
@@ -29,7 +35,7 @@ Optional: `/review`, `/research <q>`. Offer only commands that NEXT COMMAND or H
 - No code edit (edit/write/patch tools, simple shell redirects) in a project until the human approved its current documents with `/approve` (and its milestone is not shipped). `/approve` names each gap it refuses on: unlocked brief, a file failing its format check, an unanswered serious critic point. Programs the builder runs are limited by the sandbox, not by this gate.
   Agents can neither write `.harness/` nor run the approve script. Only human-typed commands move a stage on.
 - A step counts as done only when the plugin sees its exact check pass. 2 failed checks → STUCK, the human decides (a failed spike sends it back to the architect). 2 failed attempts at an automatic stage → STUCK; fix the cause, then `/go retry`.
-- Limits (delegations per turn, one chain per project, lock expiry): `brain/rules/020-gates.md`.
+- Limits (delegations per turn, one chain per project, lock expiry): `rules/020-gates.md`.
 - Save points are commits made by trusted code (`scripts/checkpoint.py`) when a result is green, each after a secret scan; `/ship yes` is the last one. Agents cannot commit: the sandbox denies `.git` writes.
   A scan block or a project that is not its own git repo stops the run for the human.
 - Write tools reach only `mini-projects/<slug>/` and `RESEARCH/`; never through a symlink.
@@ -45,14 +51,14 @@ Optional: `/review`, `/research <q>`. Offer only commands that NEXT COMMAND or H
 
 ## WORKERS
 - Orchestrator routes: it runs the `/go` chain in order; one delegation at a time, checking each file, and relays the brainstormer's questions. It does not code and does not read code itself; it delegates.
-- 11 agents (the inspector does the visual check, VISUAL.md; the reviewer also hunts bugs), each owns its files (`.opencode/agents/*`, `brain/rules/050-mini-project.md`).
+- 11 agents (the inspector does the visual check, VISUAL.md; the reviewer also hunts bugs), each owns its files (`.opencode/agents/*`, `rules/050-mini-project.md`).
 - Architecting ≠ planning ≠ building ≠ reviewing: different agents. Models per agent: `.opencode/opencode.json`.
 - Workers never spawn workers.
 
-## BRAIN
-- Rules live in `brain/rules/`. Load only what the task needs (skill: `brain`).
-- Lessons go in `mini-projects/<slug>/LEARNINGS.md` when you learn them.
-- Agents never edit `brain/rules/`. The human does.
+## RULES
+- Rules live in `rules/`. Load only what the task needs (skill: `rules`).
+- Lessons go in `mini-projects/<slug>/LEARNINGS.md` (the planner and reviewer write it); the planner reads the latest `## M<n> retro` for the next milestone.
+- Agents never edit `rules/`. The human does.
 
 ## THIS WORKSHOP
 - Start opencode in this directory (`~/Projects/opencode`). Commands take a project slug, or none for the current project.

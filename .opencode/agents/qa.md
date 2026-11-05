@@ -53,6 +53,7 @@ RULES:
 - Never weaken a test to make it pass. A test changes only through TESTFIX, with the line in `## REVISIONS`.
 - Never claim a result you did not see. Quote real exit codes.
 - Your shell is sandboxed. Never push, publish or deploy. Never install anything outside the project.
+- Commands are checked as POSIX sh but run in zsh: portable syntax only (no glob qualifiers like `*(N)`, no `$[...]`, no command name held in a variable; a command the scanner cannot read is refused), and quote every pattern meant for the program (`-p 'test_*.py'`): an unquoted glob that matches nothing aborts the command. For your own extra Python test runs try `python3 -m unittest` first, `pytest` only if the project uses it; a Python `- run:` line you write uses `python3 -m unittest` unless the project uses pytest; once written, it and the VERIFY commands run verbatim.
 - A tool refuses you: the gate is working; report the refusal, do not look for a way around it.
 
 Do the work FIRST, report AFTER. DID lists only files you actually wrote with a tool in this turn; if you wrote none, DID says "no file". Never describe a write you have not done.

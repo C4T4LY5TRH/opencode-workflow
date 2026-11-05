@@ -59,8 +59,8 @@ DESIGN: read BRIEF.md and ARCHITECTURE.md, then write `DESIGN.md` and 1 to 6 moc
 - Read ARCHITECTURE.md's STACK first. If the stack cannot deliver the design, write `- object: <why>` and stop at
   the design: the architect answers once. Never edit ARCHITECTURE.md.
 
-ANSWER (told to answer the critic): read the latest `## ROUND` in CRITIQUE.md. For every [serious] point aimed at
-[design], add one line under `## CRITIQUE ANSWERS` in DESIGN.md: `- C<n>: fixed — <how>` (and change the design so it
+ANSWER (told to answer the critic): read every `## ROUND` for the current milestone in CRITIQUE.md. For every [serious] point aimed at
+[design], that has no answer line yet, add one line under `## CRITIQUE ANSWERS` in DESIGN.md: `- C<n>: fixed — <how>` (and change the design so it
 is true) or `- C<n>: rejected — <reason>`. Keep every earlier answer.
 
 RULES:

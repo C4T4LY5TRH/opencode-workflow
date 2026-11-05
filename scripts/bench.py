@@ -15,15 +15,14 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKSHOP = os.path.dirname(HERE)
 OPEN = os.path.join(WORKSHOP, ".opencode")
-BRAIN = os.path.join(WORKSHOP, "brain")
-RULES = os.path.join(BRAIN, "rules")
+RULES = os.path.join(WORKSHOP, "rules")
 RUNTIME = os.path.join(WORKSHOP, ".harness")
 
 AGENTS = ["orchestrator", "brainstormer", "architect", "planner", "builder", "reviewer", "critic", "researcher",
           "qa", "designer", "inspector"]
 COMMANDS = ["new", "go", "approve", "ship", "status", "critique", "review", "research", "brainstorm", "stop", "undo",
             "deploy", "publish"]
-SKILLS = ["caveman", "browser", "visual-review", "html2md", "spec", "brain", "verify"]
+SKILLS = ["caveman", "browser", "html2md", "spec", "rules", "verify"]
 # review kit agents: none since piece 3 (hunter and skeptic were cut); the list stays for the bench loops.
 KIT_AGENTS = []
 KIT_SKILLS = ["bug-hunt", "code-review"]
@@ -53,14 +52,14 @@ def md_files(d):
 
 # --- rules
 rule_files = md_files(RULES)
-check("core-rules-present", "core rule file exists", os.path.isfile(os.path.join(RULES, "000-core.md")))
+check("core-rules-present", "AGENTS.md carries the core rules", "## CORE" in read(os.path.join(WORKSHOP, "AGENTS.md")))
 ids = [f.split("-")[0] for f in rule_files]
 check("rules-numbered", "rule ids unique", len(ids) == len(set(ids)), ",".join(ids))
 too_long = [f"{f}:{len(read(os.path.join(RULES, f)).splitlines())}" for f in rule_files
             if len(read(os.path.join(RULES, f)).splitlines()) > 40]
 check("rules-small", "every rule <= 40 lines", not too_long, ",".join(too_long))
 
-skill_index = read(os.path.join(OPEN, "skills", "brain", "SKILL.md"))
+skill_index = read(os.path.join(OPEN, "skills", "rules", "SKILL.md"))
 malformed = []
 for f in rule_files:
     lines = [l for l in read(os.path.join(RULES, f)).splitlines() if l.strip()]
@@ -133,8 +132,8 @@ check("commands-agents-resolve", "every command targets an existing, enabled age
 check("orchestrator-can-reach", "orchestrator may spawn every worker its commands delegate to",
       not unreachable, ",".join(unreachable))
 
-# --- an agent file with the v2 `permissions:` list must use only native keys: one v1 key (e.g.
-#     `temperature`) makes opencode 2.1.3 decode the file as v1 and silently DROP the list
+# --- an agent file with the `permissions:` list must use only native keys: one legacy-schema key (e.g.
+#     `temperature`) makes opencode 2.1.3 decode the file as the legacy (V1) schema and silently DROP the list
 #     (core/src/config/plugin/agent.ts decode; seen live on the reviewer, 2026-10-25)
 NATIVE_KEYS = {"model", "variant", "request", "system", "description", "mode", "hidden", "color", "steps",
                "disabled", "permissions"}
@@ -159,31 +158,27 @@ try:
     check("config-parses", "opencode.json is valid JSON", True)
 except Exception as exc:
     check("config-parses", "opencode.json is valid JSON", False, str(exc)[:120])
-# --- the brain agent is gone (removed 2026-11-01): no agent, no model entry, no orchestrator route, no proposals folder
-orch_task = re.search(r"^\s+task:\s*\n((?:\s{4,}[^\n]*\n)+)", read(os.path.join(OPEN, "agents", "orchestrator.md")), re.M)
-brain_left = [x for x, bad in (("agent-file", os.path.exists(os.path.join(OPEN, "agents", "brain.md"))),
-                               ("model-entry", "brain" in cfg.get("agent", {})),
-                               ("orchestrator-allow", bool(orch_task and re.search(r"^\s+brain:", orch_task.group(1), re.M))),
-                               ("proposals-dir", os.path.isdir(os.path.join(BRAIN, "proposals")))) if bad]
-check("brain-agent-gone", "no brain agent, model entry, orchestrator route or proposals folder", not brain_left, ",".join(brain_left))
 pol = cfg.get("policies", [])
 pol_res = {p.get("resource") for p in pol if p.get("effect") == "deny"}
-need_pol = ["execute:*", "shell:*rm -rf /*", "shell:*git reset --hard*", "shell:*curl *--data*",
+need_pol = ["execute:*", "experimental_image_generate:*", "shell:*rm -rf /*", "shell:*git reset --hard*", "shell:*curl *--data*",
             "shell:*git *--output*", "shell:*rg *--pre*",   # "read-only" commands that write / execute
             "shell:*find * -exec*", "shell:*-execdir*",
             # find in a "read-only" shell must not delete or write files (-fprint covers -fprint0/-fprintf)
             "shell:*find *-delete*", "shell:*find *-fprint*", "shell:*find *-fls*",
             "edit:*.harness/*", "shell:*approve.sh*",     # plan approval is human-only
             "playwright_browser_run_code_unsafe:*", "playwright_browser_file_upload:*", "playwright_browser_drop:*",
-            # v3: nothing asks the trusting builder, so push and publish are human-only
+            # nothing asks the trusting builder, so push and publish are human-only
             "shell:*git push*", "shell:*npm publish*", "shell:*pnpm publish*", "shell:*yarn publish*",
             "shell:*twine upload*", "shell:*gh release*"]
 miss_pol = [r for r in need_pol if r not in pol_res]
 check("policies-hard-stops", "policies deny Code Mode + destructive + exfil", not miss_pol, ",".join(miss_pol))
 # a policy deny does not hide a tool; only a permission-layer deny does (verified live)
 perm_map = cfg.get("permission", {}) if isinstance(cfg.get("permission"), dict) else {}
-check("code-mode-off", "execute (Code Mode) denied in the permission layer",
-      perm_map.get("execute") == "deny", f"permission.execute = {perm_map.get('execute')!r}")
+# 2.2.5: experimental_image_generate is on by default when a provider has an image model; it writes files
+# from inside opencode (outside the sandbox) and the gate does not check it
+hidden = ("execute", "experimental_image_generate")
+check("code-mode-off", "execute (Code Mode) and image generation denied in the permission layer",
+      all(perm_map.get(k) == "deny" for k in hidden), ", ".join(f"{k} = {perm_map.get(k)!r}" for k in hidden))
 legacy = [k for k in ("subagent_depth", "small_model", "tools") if k in cfg]
 if isinstance(cfg.get("compaction"), dict) and "prune" in cfg["compaction"]:
     legacy.append("compaction.prune")
@@ -267,7 +262,7 @@ check("builder-cannot-write-gate-files", "builder edit denies the doc files, .en
       ("no edit rules found in builder.md" if not builder_edit else
        ",".join(writable[:6]) + ("" if code_ok else " code write not allowed")))
 
-# --- every doc file has one owner (spec 7.2 rule 10): the ship gate trusts a REVIEW.md written by a write tool,
+# --- every doc file has one owner (spec 7.2 rule 10): the review record trusts a REVIEW.md written by a write tool,
 #     the plan gate and the approval hash trust BRIEF/ARCHITECTURE/PLAN/CRITIQUE, and the plugin does not know
 #     which agent writes. So every agent opencode really loaded (custom and built-in) must resolve each file to
 #     deny, its owner to allow (QA.md: qa; DESIGN.md: designer; VISUAL.md: inspector).
@@ -397,8 +392,8 @@ check("orchestrator-status-only", "orchestrator + chain writers' shell: status.p
 
 # --- plugins present + the gates actually FIRE
 plugins = os.listdir(os.path.join(OPEN, "plugins")) if os.path.isdir(os.path.join(OPEN, "plugins")) else []
-check("plugins-present", "safety-gate + brain-log installed",
-      all(p in plugins for p in ["safety-gate.ts", "brain-log.ts"]), ",".join(plugins))
+check("plugins-present", "safety-gate installed",
+      all(p in plugins for p in ["safety-gate.ts"]), ",".join(plugins))
 try:
     gt = subprocess.run(["node", os.path.join(HERE, "gate-test.mjs")], capture_output=True, text=True, timeout=300)
     last = gt.stdout.strip().splitlines()[-1] if gt.stdout.strip() else gt.stderr[-200:]
@@ -407,12 +402,36 @@ except Exception as exc:
     check("gates-fire", "safety-gate plugin fires on every gate case", False, str(exc)[:120])
 
 # --- state library (plan parsing, approval, tree hash, phase)
+def state_detail(out, ok):
+    """Name what failed: first 3 FAIL/ERROR lines, first 3 skips, then the summary line (<= ~300 chars)."""
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    last = lines[-1] if lines else ""
+    if ok:
+        return last
+    bad = [l for l in lines if re.match(r"(FAIL|ERROR): ", l)][:3]
+    skips = [re.sub(r" \(.*?\) \.\.\. skipped", " skipped", l) for l in lines if re.search(r"skipped '", l)][:3]
+    return "; ".join([last] + bad + skips)[:300]  # the summary first, so the cap never cuts it
+
+
+st_out, st_ok = "", False
 try:
-    st = subprocess.run([sys.executable, os.path.join(HERE, "state-test.py")], capture_output=True, text=True, timeout=300)
-    tail = (st.stderr.strip().splitlines() or st.stdout.strip().splitlines() or [""])[-1]
-    check("state-tests", "state library unit tests pass", st.returncode == 0, tail)
+    st = subprocess.run([sys.executable, os.path.join(HERE, "state-test.py"), "-v"], capture_output=True, text=True, timeout=540)
+    st_out, st_ok = st.stdout + st.stderr, st.returncode == 0
+    st_detail = state_detail(st_out, st_ok)
 except Exception as exc:
-    check("state-tests", "state library unit tests pass", False, str(exc)[:120])
+    st_detail = str(exc)[:120]
+    part = [getattr(exc, a, None) for a in ("stdout", "stderr")]  # a timeout keeps the partial -v output (bytes)
+    st_out = "".join(x.decode("utf-8", "replace") if isinstance(x, bytes) else (x or "") for x in part)
+if not st_ok:
+    try:  # keep the full output so the next failure names itself
+        os.makedirs(os.path.join(RUNTIME, "bench-history"), exist_ok=True)
+        st_log = os.path.join(RUNTIME, "bench-history", datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-state-tests.log")
+        with open(st_log, "w", encoding="utf-8") as fh:
+            fh.write(st_out or st_detail)
+        st_detail = (st_detail + " | log: " + os.path.relpath(st_log, os.path.dirname(RUNTIME)))[:400]
+    except Exception:
+        pass
+check("state-tests", "state library unit tests pass", st_ok, st_detail)
 
 # --- OS sandbox for agent shells (macOS sandbox-exec); gates-fire runs its cases for real
 sbx = os.path.join(HERE, "sandbox")
@@ -424,7 +443,7 @@ check("sandbox-present", "agent shell sandbox wrapper, profile and sandbox-exec 
 
 # --- plugins actually loaded (heartbeat)
 alive = read(os.path.join(RUNTIME, "plugins-alive"))
-not_alive = [p for p in ("safety-gate", "brain-log") if f"{p} loaded" not in alive]
+not_alive = [p for p in ("safety-gate",) if f"{p} loaded" not in alive]
 check("plugins-alive", "plugins reported a load heartbeat", bool(alive.strip()) and not not_alive,
       "no heartbeat yet - start opencode once in the workshop" if not alive.strip() else ",".join(not_alive))
 
@@ -444,12 +463,12 @@ check("template-shape", "template has the non-gate scaffold", not tpl_need, ",".
 
 # --- no harness files left in the global config dir (would duplicate / shadow)
 gdir = os.environ.get("OPENCODE_CONFIG_DIR", os.path.expanduser("~/.config/opencode"))
-stray = [d for d in ("agents", "commands", "skills", "plugins", "brain") if os.path.isdir(os.path.join(gdir, d))]
+stray = [d for d in ("agents", "commands", "skills", "plugins") if os.path.isdir(os.path.join(gdir, d))]
 check("no-global-harness", "no harness files in ~/.config/opencode", not stray, ",".join(stray))
 
 # --- changelog + version
-ch = read(os.path.join(BRAIN, "CHANGELOG.md"))
-check("changelog-current", "brain changelog has a version", bool(re.search(r"##\s*v", ch)))
+ch = read(os.path.join(WORKSHOP, "CHANGELOG.md"))
+check("changelog-current", "changelog has a version", bool(re.search(r"##\s*v", ch)))
 m = re.search(r"##\s*v(\d+\.\d+)", ch)
 version = m.group(1) if m else "0.0"
 

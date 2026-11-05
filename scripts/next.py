@@ -203,7 +203,7 @@ def _fix_text(slug, rounds, files):
             f"tests/acceptance/. Then stop. {REPORT}")
 
 
-def _work_items(slug, st, state, d, fix_round, tree=None):
+def _work_items(slug, st, state, d, fix_round, tree, proj):
     """[(agent, what, text)] of an automatic stage: `what` is the word after '<slug>: ' in the delegation description."""
     name, cm = st["stage"], st["milestone"]
     steps = [s for s in state.get("steps", []) if isinstance(s, dict) and s.get("milestone") == cm]
@@ -230,14 +230,20 @@ def _work_items(slug, st, state, d, fix_round, tree=None):
             out.append(("inspector", "visual", _visual_text(slug)))
         return out
     if name == "REVIEW":
-        return [("reviewer", "review", _review_text(slug))]
+        # a REVIEW.md that was not recorded: fix it, not redo it. Only for the same code: after a change a fix-up
+        # would be recorded against code nobody reviewed
+        bad = hs.review_problem(proj) if state.get("review_unrecorded") == tree else None
+        lead = (f"The REVIEW.md on disk was NOT recorded: {bad}. Fix only that: give each lens one line spelled "
+                "'- <lens>: checked ...' or '- <lens>: see ...'; keep the rest of REVIEW.md and do not redo the "
+                "review. The normal instruction follows. ") if bad else ""
+        return [("reviewer", "review", lead + _review_text(slug))]
     files = list(dict.fromkeys(f for s in steps for f in s.get("files") or [] if isinstance(f, str)))  # FIX
     return [("builder", "fix", _fix_text(slug, fix_round, files))]
 
 
-def _work_contract(slug, st, state, d, fix_round, tree=None):
+def _work_contract(slug, st, state, d, fix_round, tree, proj):
     """The contract of TESTS, BUILD, VERIFY, REVIEW and FIX: one worker, or a numbered list of delegations."""
-    items = _work_items(slug, st, state, d, fix_round, tree)
+    items = _work_items(slug, st, state, d, fix_round, tree, proj)
     c = {"PHASE": st["stage"], "AGENT": ", ".join(a for a, _, _ in items), "NEXT COMMAND": f"/go {slug}",
          "STATUS": status_line(slug, st, state)}
     if len(items) == 1:
@@ -377,8 +383,8 @@ def _write_text(agent, slug, ms, revise_text, design=False):
 
 
 def _answer_text(agent, slug, fname):
-    return (f"Answer the critic: read the latest '## ROUND' in mini-projects/{slug}/CRITIQUE.md. For every [serious] "
-            f"point whose target is {ANSWER_TARGETS[agent]}, add one line under '## CRITIQUE ANSWERS' in {fname}: "
+    return (f"Answer the critic: read every '## ROUND' for the current milestone in mini-projects/{slug}/CRITIQUE.md. "
+            f"For every [serious] point whose target is {ANSWER_TARGETS[agent]} and that has no answer line yet, add one line under '## CRITIQUE ANSWERS' in {fname}: "
             "'- C<n>: fixed — <how>' (change the file so it is true) or '- C<n>: rejected — <reason>' (a brief point "
             "that needs the brief changed: 'rejected — needs /brainstorm'). Keep earlier answers and every other "
             f"section's format; change no other file. {WRITE}")
@@ -730,7 +736,7 @@ def _turn_scope(st, state):
     elif name == "VERIFY":
         allowed = ["QA.md", "VISUAL.md", "design/shots/"]
     elif name == "REVIEW":
-        allowed = ["REVIEW.md", ".review/"]  # and the reviewer's throwaway probes
+        allowed = ["REVIEW.md", ".review/", "LEARNINGS.md"]  # its throwaway probes; its milestone retro on SHIP
     else:  # FIX (spec 6): any file of the milestone's steps, and regression tests under tests/ but never QA's
         allowed = [f for s in steps for f in s.get("files") or [] if isinstance(f, str)] + ["tests/"]
         denied = ["tests/acceptance/"]
@@ -800,6 +806,7 @@ def _after_turn(proj, slug, retry):
                      nxt="/go retry if you made this change; otherwise remove it, then /go")
     if stage == "REVIEW" and hs.review_verdict(proj) is None:
         attempts[stage] = attempts.get(stage, 0) + 1  # in scope but no recorded verdict (e.g. a lens missing in ## Hunt)
+        state["review_unrecorded"] = hs.tree_sha256(proj)  # the code that bad REVIEW.md judged (see _work_items)
     else:
         attempts.pop(stage, None)  # a turn that stayed in scope ends the run of failures
     state["stage_attempts"] = attempts
@@ -937,7 +944,7 @@ def _go(workshop, proj, slug, retry):
     d = hs.docs(proj)
     tree = hs.tree_sha256(proj)
     visual = name == "VERIFY" and bool(d["brief"] and d["brief"]["ui"]) and hs.visual_needed(state, cm, tree)
-    out = _work_contract(slug, st, state, d, state.get("fix_rounds") or 0, tree)
+    out = _work_contract(slug, st, state, d, state.get("fix_rounds") or 0, tree, proj)
     if visual:  # the inspector's visual item was issued: count the run now, as fix_rounds is counted
         runs = state.get("visual_runs") if isinstance(state.get("visual_runs"), dict) else {}
         state["visual_runs"] = {**runs, cm: (runs.get(cm) or 0) + 1}
@@ -1023,14 +1030,13 @@ def contract(workshop, args):
 
 
 def _bad_state(st):
-    """True for the STUCK of an unreadable state.json or an old-format project (no stage can run on either)."""
-    return st["stage"] == "STUCK" and not st["at"] and st["reason"].startswith(("state unreadable", hs.V3_REFUSAL))
+    """True for the STUCK of an unreadable state.json (no stage can run on it)."""
+    return st["stage"] == "STUCK" and not st["at"] and st["reason"].startswith("state unreadable")
 
 
 def _bad_state_none(slug, st):
-    nxt = NEW_HINT if st["reason"].startswith(hs.V3_REFUSAL) else f"/go {slug}"  # an old-format project starts again with /new
     return _none(f"Nothing to delegate. Tell the human, word for word: {st['reason']}.", status=f"{slug}  STUCK",
-                 nxt=nxt)
+                 nxt=f"/go {slug}")
 
 
 CRITIQUE_STAGES = ("DECIDE", "CRITIQUE", "BUILD", "STUCK", "REVIEW", "FIX", "SHIP")  # H10: a plan exists to judge

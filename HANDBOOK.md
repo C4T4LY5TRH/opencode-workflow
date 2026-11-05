@@ -1,9 +1,9 @@
 # HANDBOOK — the opencode one-person harness (v4: idea to shippable milestone)
 
-How it works and how to drive it. Security detail: `AUDIT.md` §8b. Design: `docs/superpowers/specs/2026-10-27-harness-v4-front-half-design.md`, `2026-10-31-harness-v4-piece2-build-team-design.md` (+ `...-roadmap.md`).
+How it works and how to drive it. Security detail: `SECURITY.md`. Design: `docs/superpowers/specs/2026-10-27-harness-v4-front-half-design.md`, `2026-10-31-harness-v4-piece2-build-team-design.md` (+ `...-roadmap.md`).
 
 ## 1. What this is
-A project-local opencode harness for one person vibecoding. Built for opencode **2.2.0** (the facts were read in 2.1.3 and diffed unchanged).
+A project-local opencode harness for one person vibecoding. Verified on opencode **2.2.5** (2026-11-04; the platform facts were read in 2.1.3 and re-checked for 2.2.0 and 2.2.5).
 - **Idea to approved plan, with specialists:** a brainstormer writes the brief, an architect the architecture, a designer (UI projects) the design
   and mockups, a planner the plan, a critic attacks it. You approve one set of documents; only then can code be written.
 - **Plan to shippable milestone, on autopilot:** after `/approve`, one `/go` builds the whole milestone: QA writes failing tests first, one step is built
@@ -50,12 +50,12 @@ the stop message names that command. Esc cuts a running turn.
 **Sandboxes do not nest:** a spike that jails a program prints `JAIL: UNVERIFIED (nested sandbox)` here; run it once in a normal Terminal and see `JAIL: OK` before `/ship`.
 
 ## 3. Layout
-- `AGENTS.md` (loaded in every session here); `.opencode/` (opencode.json with models, permissions, policies; agents/ 11; commands/ 13; skills/; plugins/ safety-gate, brain-log (rule index, session log)).
+- `AGENTS.md` (loaded in every session here); `.opencode/` (opencode.json with models, permissions, policies; agents/ 11; commands/ 13; skills/; plugins/ safety-gate).
 - `scripts/`: next.py, harness_state.py, harness_docs.py, checkpoint.py (save points, scan, /undo, /publish), deploy.py, status.py, approve.sh, new-project.sh, preview.sh (starts a UI app for the inspector) ...; `scripts/sandbox/` is the OS sandbox of every agent shell.
 - `mini-projects/<slug>/`: its own git repo (`_template/` is the scaffold). BRIEF, BRAINSTORM, ARCHITECTURE, DESIGN, PLAN, CRITIQUE, QA, VISUAL, REVIEW are written by
   their agents; folders `design/` (mockups, screenshots), `tests/acceptance/` (QA's tests) and `requests/` are new. `.harness/state.json` and `.harness/lock`
   (gitignored, trusted code only) hold approval, steps, milestones, cost and the running chain.
-- `brain/` (rules, prompts, CHANGELOG.md), `RESEARCH/`, `.harness/` (dashboard.html, events.jsonl, bench-history/; gitignored).
+- `rules/` (the rulebook), `CHANGELOG.md`, `RESEARCH/`, `.harness/` (dashboard.html, bench-history/; gitignored).
 
 ## 4. Commands (13)
 | Command | Does | Writes |
@@ -95,7 +95,7 @@ A worker the provider's content filter blocks ("Provider blocked the response") 
 | critic | claude-sonnet-5-5 | `CRITIQUE.md` | read-only |
 | qa | claude-sonnet-5-5 | `tests/acceptance/**`, `QA.md` | any command (sandboxed) |
 | builder (one per turn) | claude-sonnet-5-5 | its step's files + `requests/step<n>.md`; never tests, documents, `.env`, `.git` | any command (sandboxed) |
-| reviewer | claude-opus-5-5 | `REVIEW.md` (plan problems go under `## Plan notes`, never FIX FIRST), `LEARNINGS.md`, throwaway probes in `.review/` | read-only git + test runners + probes |
+| reviewer | claude-opus-5-5 | `REVIEW.md` (plan problems go under `## Plan notes`, never FIX FIRST), `LEARNINGS.md` (on SHIP a 5-line `## M<n> retro` the planner reads for the next milestone), throwaway probes in `.review/` | read-only git + test runners + probes |
 | researcher | claude-haiku-5-5 | `RESEARCH/**` | ls, cat, html2md.py; web + Playwright |
 **The reviewer** does two passes in one run: health (spec, tests, security), then a bug hunt. It tries to disprove each suspect bug and labels survivors
 PROVEN (a command it ran shows it), TRACED (exact path:line and input) or LEAD (a suspicion). Only PROVEN/TRACED can say FIX FIRST; leads are listed at `/ship`.
@@ -109,7 +109,7 @@ Bench `models-resolve` checks the models exist; swap one in `opencode.json`.
 - **Limits in code:** 16 delegations per human turn, one open at a time; one chain per project (lock, kept fresh while it works, expires after 30 minutes; a turn frees and continues only its own project, so a crash leftover waits for the 30 minutes); 2 attempts per automatic stage; the cost cap and turn cap (§2).
   Dashboard: `.harness/dashboard.html`, one card per project with its cost, read-only; rebuilt by the commands.
 
-## 7. Security in short (full table, push/publish and limits: `AUDIT.md` §8b)
+## 7. Security in short (full table, push/publish and limits: `SECURITY.md`)
 Five layers: `policies` (hard denies), per-agent permissions (each agent writes only its own files), the safety-gate plugin (plan gate,
 write confinement, a builder confined to its step, circuit breaker, cost, and the autopilot loop that only ever sends `/go`), an OS sandbox around every agent shell
 (macOS; writes only the project; no keys; never `.git`), and prompts.

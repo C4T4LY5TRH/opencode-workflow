@@ -220,14 +220,6 @@ def save(proj, state):
     os.replace(tmp, path)
 
 
-V3_REFUSAL = "v3 project: not supported by v4; start it again with /new"
-
-
-def is_v3_state(state):
-    """A v3 project: a recorded plan hash and no v4 approval hash."""
-    return "plan_sha256" in state and "approved_sha256" not in state
-
-
 def _bak_loads(proj):
     """Does state.json.bak load (parses, right shape)? Only then is it worth offering as the way back."""
     try:
@@ -457,9 +449,10 @@ def _revise_pending(d, state):
 
 
 def _unanswered(proj, d, latest):
-    """One message per serious point of the round that its target file does not answer."""
+    """One message per serious point, in every round of the latest round's milestone, that its target file does not answer."""
     out, cache = [], {}
-    for pt in latest["points"]:
+    pts = [pt for r in d["critique"]["rounds"] if r["milestone"] == latest["milestone"] for pt in r["points"]]
+    for pt in pts:
         if pt["severity"] != "serious":
             continue
         name = hd.ANSWER_FILE[pt["target"]]
@@ -634,7 +627,7 @@ def fix_running(proj):
 
 def approve(proj, now):
     """The human's approval: BRIEF + ARCHITECTURE + PLAN (+ DESIGN) are approved together, and every missing item
-    is named in one refusal. An unreadable state or a v3 project is refused with its one message; nothing is written."""
+    is named in one refusal. An unreadable state is refused with its one message; nothing is written."""
     running = _running(proj, f"/approve {os.path.basename(os.path.abspath(proj))}")
     if running:
         raise PlanError(running)
@@ -642,8 +635,6 @@ def approve(proj, now):
         state = load(proj)
     except StateError:
         raise PlanError(unreadable_reason(proj))
-    if is_v3_state(state):
-        raise PlanError(V3_REFUSAL)
     slug = os.path.basename(os.path.abspath(proj))
     d = docs(proj)
     errors = d["errors"]
@@ -829,8 +820,6 @@ def _ship_gate(proj):
         state = load(proj)
     except StateError:
         return None, f"NOT RECORDED: {unreadable_reason(proj)}"
-    if is_v3_state(state):
-        return None, f"NOT RECORDED: {V3_REFUSAL}"
     slug = os.path.basename(os.path.abspath(proj))
     running = _running(proj, f"/ship {slug}")
     if running:
@@ -1095,8 +1084,6 @@ def stage(proj):
         state = load(proj)
     except StateError:
         return _stage_result("STUCK", unreadable_reason(proj))
-    if is_v3_state(state):
-        return _stage_result("STUCK", V3_REFUSAL)
 
     d = docs(proj)
     errors = d["errors"]
@@ -1184,7 +1171,7 @@ def stage(proj):
     # row 10: ANSWER
     unanswered = _unanswered(proj, d, latest)
     if unanswered:
-        return out("ANSWER", f"/go {slug} has the authors answer the serious points of round {latest['n']}",
+        return out("ANSWER", f"/go {slug} has the authors answer the serious points of the {latest['milestone']} critique rounds",
                    error="; ".join(unanswered))
 
     # row 11: DECIDE

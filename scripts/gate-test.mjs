@@ -12,7 +12,6 @@
 // OS sandbox for agent shells (shell hook + scripts/sandbox/, run for real; macOS).
 // Destructive commands are the policy layer's job; scripts/bench.py checks those.
 import { spawnSync } from "node:child_process"
-import { createHash } from "node:crypto"
 import fs from "node:fs"
 import net from "node:net"
 import path from "node:path"
@@ -110,18 +109,6 @@ for (const proj of spec.approve) {
   v4Project(path.join(root, proj), [["hello", "hello.txt", "true"]])
   const r = approve(path.basename(proj))
   if (r.status !== 0) throw new Error(`approve.sh failed for ${proj}: ${r.stdout} ${r.stderr}`)
-}
-// one v3 project: a recorded plan hash and steps, no approval hash (v3 mode is gone: the plan gate refuses it)
-{
-  const dir = path.join(root, "mini-projects", "v3mode")
-  fs.mkdirSync(path.join(dir, "src"), { recursive: true })
-  const plan = "## SCOPE\nIN: x\n## STEPS\n### 1. hello\n- files: hello.txt\n- done when: `true`\n## ACCEPTANCE\nit runs\n"
-  fs.writeFileSync(path.join(dir, "PLAN.md"), plan)
-  fs.mkdirSync(path.join(dir, ".harness"), { recursive: true })
-  fs.writeFileSync(path.join(dir, ".harness", "state.json"), JSON.stringify({
-    plan_sha256: createHash("sha256").update(plan).digest("hex"), approved_at: "t", fix_rounds: 0,
-    steps: [{ n: 1, title: "hello", files: ["hello.txt"], check: "true", done_at: null, attempts: 0, last_failure: null }],
-  }))
 }
 // step-recording projects: a 2-step plan (check 1 exits 0, check 2 exits 1), approved, with one code file;
 // stepr also has a REVIEW.md that says SHIP

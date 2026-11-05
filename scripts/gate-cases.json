@@ -430,11 +430,11 @@
       "session": "",
       "tool": "write",
       "input": {
-        "path": "$ROOT/brain/rules/x.md",
+        "path": "$ROOT/rules/x.md",
         "content": "x"
       },
       "expect": "block",
-      "note": "confinement: a workshop-root session cannot write brain/rules/"
+      "note": "confinement: a workshop-root session cannot write rules/"
     },
     {
       "id": "w4",
@@ -469,17 +469,6 @@
       },
       "expect": "block",
       "note": "root session: code write still plan-gated (no PLAN.md)"
-    },
-    {
-      "id": "w7",
-      "session": "",
-      "tool": "write",
-      "input": {
-        "path": "$ROOT/brain/proposals/x.md",
-        "content": "x"
-      },
-      "expect": "block",
-      "note": "root session: brain/proposals/ is gone, no longer a writable path"
     },
     {
       "id": "w8",
@@ -745,7 +734,7 @@
         "content": "x"
       },
       "expect": "allow",
-      "note": "v3: CRITIQUE.md (the /critique report) is a doc, not code: no plan needed (the critic writes it before /approve)"
+      "note": "CRITIQUE.md (the /critique report) is a doc, not code: no plan needed (the critic writes it before /approve)"
     },
     {
       "id": "p9",
@@ -756,7 +745,7 @@
         "content": "x"
       },
       "expect": "block",
-      "note": "v3: SCOPE.md is gone from the doc list (scope is a PLAN.md section): now an ordinary code write, plan-gated"
+      "note": "SCOPE.md is gone from the doc list (scope is a PLAN.md section): now an ordinary code write, plan-gated"
     },
     {
       "id": "p10",
@@ -767,7 +756,7 @@
         "content": "x"
       },
       "expect": "block",
-      "note": "v3: BLIND.md is gone from the doc list (blind spots live in REVIEW.md)"
+      "note": "BLIND.md is gone from the doc list (blind spots live in REVIEW.md)"
     },
     {
       "id": "c1",
@@ -2990,7 +2979,7 @@
       "message_has": "different-case"
     },
     {
-      "id": "v1",
+      "id": "approved-code-write",
       "session": "mini-projects/v4a",
       "tool": "write",
       "input": {
@@ -3001,7 +2990,7 @@
       "note": "H1 plan gate: code write in a v4-approved project"
     },
     {
-      "id": "v2",
+      "id": "approval-revoked-arch-edit",
       "session": "mini-projects/v4a",
       "tool": "write",
       "input": {
@@ -3017,7 +3006,7 @@
       "note": "H1 plan gate: ARCHITECTURE.md edited after approval revokes it"
     },
     {
-      "id": "v3",
+      "id": "approval-shipped-milestone",
       "session": "mini-projects/v4b",
       "tool": "write",
       "input": {
@@ -3035,18 +3024,6 @@
       "expect": "block",
       "message_has": "plan gate",
       "note": "H24 plan gate: the approved plan's milestone has shipped"
-    },
-    {
-      "id": "v4",
-      "session": "mini-projects/v3mode",
-      "tool": "write",
-      "input": {
-        "path": "$ROOT/mini-projects/v3mode/src/app.js",
-        "content": "x"
-      },
-      "expect": "block",
-      "message_has": "plan gate",
-      "note": "plan gate: a v3 project (state has only plan_sha256, no approved_sha256) is refused a code write"
     },
     {
       "id": "o8",

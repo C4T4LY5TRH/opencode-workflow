@@ -30,6 +30,6 @@ if [ ! -f "$PROJ/PLAN.md" ]; then
   exit 1
 fi
 
-# the library approves BRIEF + ARCHITECTURE + PLAN under one approval hash (a v3 project is refused);
+# the library approves BRIEF + ARCHITECTURE + PLAN under one approval hash;
 # plan parsing, step recording and the state file are its job
 exec python3 "$HERE/harness_state.py" approve "$PROJ"

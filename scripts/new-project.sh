@@ -7,14 +7,14 @@
 #    or:  GOAL="<idea>" new-project.sh [slug]
 #    or:  new-project.sh "<idea>" [slug]
 # Reading the idea from stdin or the GOAL env var means callers never build a
-# shell string out of user text (AUDIT.md P2-1). /new passes it through a quoted
+# shell string out of user text. /new passes it through a quoted
 # heredoc, so quotes, $(...) and ; in an idea stay plain text.
 # The whole idea (every line) becomes {{GOAL}} (spec H13). The slug: an idea that starts
 # with "<slug>: " names the project (H21); else the first line's first 5 words.
 #
 # The template ships NO gate files (PLAN/REVIEW/CRITIQUE/BUGHUNT). They appear only
-# when their owning agent writes them, so the plan and ship gates mean something
-# from the first minute (AUDIT.md P0-2).
+# when their owning agent writes them, so the plan gate means something
+# from the first minute.
 set -euo pipefail
 
 if [ "${1:-}" = "-" ]; then

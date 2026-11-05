@@ -1,6 +1,6 @@
 # opencode mini-project workshop
 
-One brain. Many mini projects. A specialist team from idea to approved plan, then one command that builds the whole milestone on autopilot: `/go`.
+One harness. Many mini projects. A specialist team from idea to approved plan, then one command that builds the whole milestone on autopilot: `/go`.
 
 ## Start
 ```bash
@@ -18,15 +18,16 @@ Your Claude Code skills are deliberately hidden from opencode (see `TELEPORT.md`
 
 ## Docs
 - `HANDBOOK.md` — how it works and how to drive it: the flow, stages, agents, commands, state, troubleshooting.
-- `AUDIT.md` — the 2026-10-23 security audit: what was broken, the evidence, what was fixed; §8b is the enforcement reference.
+- `SECURITY.md` — the enforcement reference: the five layers, the build-loop and save-point controls, and the known limits.
 - `TELEPORT.md` — move the harness to another machine.
-- `docs/superpowers/specs/2026-10-27-harness-v4-front-half-design.md` — the v4 piece 1 design (`...-roadmap.md`: pieces 2-4). `docs/history/` — the v1 record.
+- `docs/superpowers/specs/2026-10-27-harness-v4-front-half-design.md` — the v4 piece 1 design (`...-roadmap.md`: pieces 2-4).
 
 ## Layout
 ```
 AGENTS.md            rules loaded in every session here (voice, flow, gates)
 .opencode/           what opencode loads: opencode.json (models, permissions, policies), agents/, commands/, skills/, plugins/
-brain/               rules/, prompts/, CHANGELOG.md
+rules/               the rulebook (agents load what a task needs: skill `rules`)
+CHANGELOG.md        version history (v4)
 scripts/             harness_state.py, harness_docs.py, next.py, checkpoint.py, deploy.py, status.py, approve.sh, new-project.sh, bench.sh, gate-test.mjs, state-test.py, bootstrap.sh
 mini-projects/       one folder = one project = its own git repo; _template/ is the scaffold
 docs/                audit evidence, specs and plans, history

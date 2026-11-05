@@ -20,7 +20,7 @@
  *   - OS sandbox: every shell runs through scripts/sandbox/agent-shell, which puts agent shells (AGENT=1) in a macOS
  *     sandbox that may write only the project the command runs in (shell create.before; not edit/write)
  *
- * v2 plugin API: export default { id, setup }. Throwing in execute.before rejects the tool call
+ * opencode plugin API: export default { id, setup }. Throwing in execute.before rejects the tool call
  * (docs/audit/research/L0-plugins.md). Paths resolve from THIS file's location, never ~/.config/opencode or cwd.
  */
 

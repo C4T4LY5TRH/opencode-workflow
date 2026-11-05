@@ -11,7 +11,7 @@
   a load failure newer than the newest heartbeat. Never trust a gate you have not seen fire.
 - A BROKEN FRONTMATTER SILENTLY DROPS THE AGENT/COMMAND. One missing newline = agent gone.
   Bench checks frontmatter shape and duplicate YAML keys.
-- The hook's `agent` field DOES carry the subagent's own id in opencode 2.1.3 (verified in source).
+- The hook's `agent` field DOES carry the subagent's own id (verified in the opencode source, 2.1.3 through 2.2.5).
   Still gate by FILE ROLE + per-agent permission rules first; use `agent` only as an extra check.
 - A LOG SCAN MUST MATCH THE EVENT, NOT A SUBSTRING. The opencode log records every shell
   command you run. A naive "does the log contain 'failed to load plugin'" check counts your

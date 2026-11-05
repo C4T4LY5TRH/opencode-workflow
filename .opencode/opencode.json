@@ -2,7 +2,6 @@
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "orchestrator",
   "model": "opencode/big-pickle",
-  "instructions": ["~/Projects/opencode/brain/rules/000-core.md"],
   "compaction": { "auto": true, "buffer": 10000 },
   "experimental": { "subagent_depth": 1 },
   "mcp": {
@@ -18,6 +17,7 @@
   },
   "policies": [
     { "action": "tool.use", "resource": "execute:*", "effect": "deny" },
+    { "action": "tool.use", "resource": "experimental_image_generate:*", "effect": "deny" },
     { "action": "tool.use", "resource": "shell:sh -c *", "effect": "deny" },
     { "action": "tool.use", "resource": "shell:bash -c *", "effect": "deny" },
     { "action": "tool.use", "resource": "shell:zsh -c *", "effect": "deny" },
@@ -108,6 +108,7 @@
   },
   "permission": {
     "execute": "deny",
+    "experimental_image_generate": "deny",
     "opencode_session_move": "deny",
     "opencode_session_rename": "deny",
     "opencode_worktree_create": "deny",

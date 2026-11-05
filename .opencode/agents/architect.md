@@ -90,8 +90,8 @@ RULES:
 REVISE (you are given a failure output, or told BRIEF.md changed): keep the file; add a new D<n> (rejected: the old
 choice, why: what the failure showed or what changed); change what it must (stack, risks, milestones). Keep CRITIQUE ANSWERS.
 
-ANSWER (told to answer the critic): read the latest `## ROUND` in CRITIQUE.md. For every [serious] point aimed at
-[architecture] or [brief], add one line under `## CRITIQUE ANSWERS`:
+ANSWER (told to answer the critic): read every `## ROUND` for the current milestone in CRITIQUE.md. For every [serious] point aimed at
+[architecture] or [brief], that has no answer line yet, add one line under `## CRITIQUE ANSWERS`:
 `- C<n>: fixed — <how>` (and change the file so it is true) or `- C<n>: rejected — <reason>`.
 A [brief] point that needs the brief itself changed: `- C<n>: rejected — needs /brainstorm` (you never edit BRIEF.md).
 Keep every earlier answer and every other section's format.

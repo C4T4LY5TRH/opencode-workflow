@@ -6,7 +6,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSHOP="$(cd "$HERE/.." && pwd)"
-WANT_OPENCODE="2.1.3"   # version the harness was verified against (AUDIT.md)
+WANT_OPENCODE="2.2.5"   # version the harness was verified against (2026-11-04, see docs/superpowers/journal/2026-11-04-piece4-build-journal.md)
 fail=0
 ok()   { echo "  [ OK ] $*"; }
 warn() { echo "  [WARN] $*"; }
@@ -16,7 +16,7 @@ echo "workshop: $WORKSHOP"
 
 if command -v opencode >/dev/null 2>&1; then
   v="$(opencode --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-  if [ "$v" = "$WANT_OPENCODE" ]; then ok "opencode $v"; else warn "opencode $v (verified on $WANT_OPENCODE; check AUDIT.md section 2 facts still hold)"; fi
+  if [ "$v" = "$WANT_OPENCODE" ]; then ok "opencode $v"; else warn "opencode $v (verified on $WANT_OPENCODE; check the facts in docs/audit/research still hold)"; fi
 else
   bad "opencode not found - install it first: https://opencode.ai"
 fi
@@ -48,11 +48,11 @@ fi
 
 # a global harness copy would merge with this one and break plugin loading
 gdir="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
-for d in agents commands skills plugins brain; do
+for d in agents commands skills plugins; do
   if [ -d "$gdir/$d" ]; then bad "global harness folder found: $gdir/$d - remove it (the harness lives in this repo only)"; fi
 done
 
-# v3 runs the orchestrator, planner, builder, reviewer and brain on Anthropic Claude. The key lives in
+# The harness runs its agents on Anthropic Claude (models: .opencode/opencode.json). The key lives in
 # opencode's auth store (outside the repo). Only the provider line is checked; the credential is never read or shown.
 # Captured first: `grep -q` stops reading at the first match, sed then dies of SIGPIPE, and pipefail made that a WARN.
 auth_list="$(opencode auth list 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"

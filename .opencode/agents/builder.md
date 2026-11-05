@@ -79,6 +79,7 @@ RULES:
 - No new dep without PLAN saying so. Never push, publish or deploy: the human does that.
 - No comments explaining WHAT code does. Only WHY when non-obvious.
 - No secrets in code. No .env writes.
+- Commands are checked as POSIX sh but run in zsh: portable syntax only (no glob qualifiers like `*(N)`, no `$[...]`, no command name held in a variable; a command the scanner cannot read is refused), and quote every pattern meant for the program (`-p 'test_*.py'`): an unquoted glob that matches nothing aborts the command. For your own extra Python test runs try `python3 -m unittest` first, `pytest` only if the project uses it; the step's `done when:` check still runs verbatim.
 - Delete nothing you did not create this session, unless PLAN says delete.
 - If the step is vague, pick the boring interpretation and note it.
 

@@ -571,11 +571,6 @@ class CliTests(V4Fixture, Base):
         return subprocess.run([sys.executable, os.path.join(HERE, "harness_state.py"), *args],
                               capture_output=True, text=True, env=env or human_env())
 
-    def v3_state(self):
-        """A v3 project: a recorded plan hash and no v4 approval hash."""
-        self.plan()
-        hs.save(self.proj, {"plan_sha256": "old"})
-
     def test_cli_approve_ok(self):
         self.v4()
         r = self.run_cli("approve", self.proj)
@@ -616,24 +611,15 @@ class CliTests(V4Fixture, Base):
         self.assertIn("REFUSED: cannot write state", r.stdout)
         self.assertNotIn("Traceback", r.stderr)
 
-    def test_v3_project_refused(self):
-        # a state with plan_sha256 and no approved_sha256 is a v3 project: one STUCK message everywhere, nothing written
-        self.v3_state()
-        want = "v3 project: not supported by v4; start it again with /new"
-        r = hs.stage(self.proj)
-        self.assertEqual((r["stage"], r["reason"]), ("STUCK", want))
+    def test_plan_hash_alone_approves_nothing(self):
+        # a state with plan_sha256 and no approved_sha256 is not approved: no BUILD, nothing written by the reads
+        self.plan()
+        hs.save(self.proj, {"plan_sha256": "old"})
         before = self.state_bytes()
         self.assertFalse(hs.approved(self.proj))
-        with self.assertRaises(hs.PlanError) as cm:
-            hs.approve(self.proj, "t")
-        self.assertEqual(str(cm.exception), want)
-        r = self.run_cli("approve", self.proj)
-        self.assertEqual(r.returncode, 1)
-        self.assertIn(want, r.stdout)
-        self.assertEqual(hs.ship(self.proj, "t9"), (False, f"NOT RECORDED: {want}"))
+        self.assertNotEqual(hs.stage(self.proj)["stage"], "BUILD")
         self.assertEqual(self.state_bytes(), before)
-        self.assertFalse(os.path.exists(os.path.join(self.proj, ".harness", "state.json.bak")))
-        # a v4 approval hash makes it a v4 project again, even with the old key left behind
+        # an approval hash makes it approved, even with a plan_sha256 key left behind
         self.fresh_proj()
         self.v4()
         st = hs.approve(self.proj, "t1")
@@ -1147,15 +1133,6 @@ class StatusTests(V4Fixture, Base):
         self.assertIn("&lt;script&gt;", page)
         self.assertIn("&lt;u&gt;finding", page)  # the findings really were shown (stage FIX), escaped
 
-    def test_status_has_no_brain_line(self):
-        # the brain agent is gone: no proposals line, no DECAY list, `brain` is just an unknown project
-        os.makedirs(os.path.join(self.shop, "brain", "proposals"))
-        open(os.path.join(self.shop, "brain", "proposals", "2026-10-25-a.md"), "w").close()
-        for page in (self.st().text(self.shop), self.st().html(self.shop)):
-            for word in ("proposal", "DECAY", "brain:"):
-                self.assertNotIn(word, page)
-        self.assertIn("no project mini-projects/brain", self.st().text(self.shop, "brain"))
-
     def test_status_bench_line(self):
         self.assertIn("bench: not run yet", self.st().text(self.shop))
         self.write_at(".harness/bench-history/20261025-010000.json", json.dumps({"at": "2026-10-25T01:00:00+00:00", "passed": 20, "failed": 3}))
@@ -1538,7 +1515,7 @@ class DocTests(unittest.TestCase):
         broken = PLAN_V4.replace("- done when: `node src/cli.js add x`\n", "")
         msg = self.refuses(hd.check_plan, broken, self.arch(), "M1", needle="step 2")
         self.assertTrue(msg.startswith("PLAN.md:"), msg)
-        with self.assertRaises(hd.PlanError) as cm:  # parse_plan itself keeps its v3 wording
+        with self.assertRaises(hd.PlanError) as cm:  # parse_plan itself keeps its plain wording
             hd.parse_plan(broken)
         self.assertTrue(str(cm.exception).startswith("step 2"))
 
@@ -1554,7 +1531,7 @@ class DocTests(unittest.TestCase):
                 self.assertEqual(r["rounds"][0]["points"][0]["text"], "a JSON file has no locking")
                 self.assertEqual(r["rounds"][0]["points"][0]["fix"], "tmp + rename")
 
-    def test_plan_v3_still_parses(self):
+    def test_plan_without_covers_parses(self):
         for s in hd.parse_plan(PLAN):
             self.assertEqual(s["covers"], [])
             self.assertIsNone(s["proves"])
@@ -2078,11 +2055,10 @@ class ApprovalV4Tests(V4Fixture, Base):
         self.assertEqual(hs.load(self.proj), st)
         self.assertTrue(hs.approved(self.proj))
 
-    def test_approve_v4_writes_no_v3_plan_hash(self):
+    def test_approve_writes_no_plan_hash(self):
         self.v4()
         st = hs.approve(self.proj, "t1")
         self.assertNotIn("plan_sha256", st)  # the plugin's plan gate asks `approved`, never this key
-        self.assertFalse(hs.is_v3_state(hs.load(self.proj)))
         self.assertNotIn("plan_sha256", hs.approve(self.proj, "t2"))
         self.assertTrue(hs.approved(self.proj))
 
@@ -2143,6 +2119,23 @@ class ApprovalV4Tests(V4Fixture, Base):
         self.write("PLAN.md", PLAN_V4.replace("## CRITIQUE ANSWERS\n", "## CRITIQUE ANSWERS\n- C2: rejected — fine as is\n"))
         self.write("DESIGN.md", "## SUMMARY\nx\n## CRITIQUE ANSWERS\n- C3: fixed — 48px\n")
         self.assertTrue(hs.approve(self.proj, "t1")["approved_sha256"])
+
+    def test_older_round_serious_point_still_blocks_same_milestone(self):
+        # round 1 (M1) has serious C2 [plan]; round 2 (M1) adds C5, answered; C2 must still be asked for
+        crit = CRITIQUE_OK.replace("[minor] [plan]", "[serious] [plan]") + \
+            "## ROUND 2 — M1\n- C5 [serious] [plan] step 2 has no test — fix: add one\n"
+        self.v4(critique=crit)
+        self.write("PLAN.md", PLAN_V4.replace("## CRITIQUE ANSWERS\n", "## CRITIQUE ANSWERS\n- C5: fixed — added\n"))
+        self.refuse("C2 (plan) unanswered in PLAN.md")
+        self.write("PLAN.md", PLAN_V4.replace("## CRITIQUE ANSWERS\n",
+                                              "## CRITIQUE ANSWERS\n- C5: fixed — added\n- C2: rejected — fine\n"))
+        self.assertTrue(hs.approve(self.proj, "t1")["approved_sha256"])
+
+    def test_older_milestone_round_does_not_block(self):
+        crit = CRITIQUE_OK + "## ROUND 2 — M2\n- C5 [minor] [plan] later — fix: x\n"
+        self.v4(critique=crit, answers="")  # M1 round 1 has C1 serious, unanswered
+        d = hs.docs(self.proj)
+        self.assertEqual(hs._unanswered(self.proj, d, d["critique"]["rounds"][-1]), [])
 
     REVISED_ARCH = ARCH_OK.replace("zero deps", "zero deps, atomic rename") + V4Fixture.ANSWER + "\n"
     REVISED_PLAN = PLAN_V4.replace("Walking skeleton.", "Walking skeleton, rewritten.")
@@ -2234,10 +2227,10 @@ class ApprovalV4Tests(V4Fixture, Base):
         hs.save(self.proj, st)
         self.assertFalse(hs.approved(self.proj))  # H24: the shipped milestone's plan is no longer an approval
 
-    def test_approved_verb_v3_and_bad_state(self):
+    def test_approved_verb_plan_hash_and_bad_state(self):
         self.plan()
         hs.save(self.proj, {"plan_sha256": sha(PLAN.encode()), "steps": []})
-        self.assertFalse(hs.approved(self.proj))  # v3 mode is gone: a plan hash alone approves nothing
+        self.assertFalse(hs.approved(self.proj))  # a plan hash alone approves nothing
         self.write(".harness/state.json", "{")
         self.assertFalse(hs.approved(self.proj))
 
@@ -3152,7 +3145,7 @@ class ChainTests(V4Fixture, Base):
         self.assertIn("Relay that output to the human verbatim. Do nothing else", bodies["stop"])
         used = set()
         for name, body in bodies.items():
-            self.assertNotIn("at most one worker call", body, name)  # v3 wording; a chain has many (H3)
+            self.assertNotIn("at most one worker call", body, name)  # old wording; a chain has many (H3)
             for block in re.findall(r"!`([^`]+)`", body):
                 rest = self.strip_forms(block, used)
                 self.assertNotIn("$ARGUMENTS", rest, f"{name}: a $ARGUMENTS outside the known forms: {block}")
@@ -3375,13 +3368,6 @@ class ChainTests(V4Fixture, Base):
         self.assertTrue(self.state()["brief"]["reopened"])
         self.assertEqual(hs.stage(self.proj)["stage"], "BRAINSTORM")
         self.assertIn(end, text)
-        self.fresh_proj()  # a v3 project has no brief rounds: refused with PHASE NONE, the v3 message
-        self.plan()
-        hs.save(self.proj, {"plan_sha256": "old"})
-        for args in ("demo", "demo brief"):
-            f = self.fields(bs(args))
-            self.assertEqual((f["PHASE"], f["AGENT"]), ("NONE", "none"))
-            self.assertIn("v3 project: not supported by v4; start it again with /new", bs(args))
         self.assertEqual(self.fields(bs("zz-none"))["AGENT"], "none")
 
     def cli_shop(self):
@@ -3601,15 +3587,15 @@ class ChainTests(V4Fixture, Base):
         self.write("ARCHITECTURE.md", ARCH_OK + self.ANSWER + "\n")
         hs.approve(self.proj, "t1")  # BUILD: allowed
         self.assertEqual(self.fields(self.nx.critique_contract(self.shop, "demo"))["PHASE"], "CRITIQUE")
-        # a v3 project (or an unreadable state) is STUCK: /critique sends the human to /go, /brainstorm says why
+        # an unreadable state is STUCK: /critique sends the human to /go, /brainstorm says why
         self.fresh_proj()
-        hs.save(self.proj, {"plan_sha256": "old"})
-        self.assertIn("v3 project: not supported", self.nx.critique_contract(self.shop, "demo"))
+        self.write(".harness/state.json", "{")
+        self.assertIn("state unreadable", self.nx.critique_contract(self.shop, "demo"))
         text = self.nx.brainstorm_contract(self.shop, "demo")
         self.assertEqual(self.fields(text)["AGENT"], "none")
-        self.assertIn("v3 project", text)
+        self.assertIn("state unreadable", text)
         self.assertNotIn("brief is locked", text)
-        self.assertIn("v3 project", self.nx.brainstorm_contract(self.shop, "demo brief"))
+        self.assertIn("state unreadable", self.nx.brainstorm_contract(self.shop, "demo brief"))
 
     def test_brainstorm_brief_honours_lock_and_flattens_topic(self):
         self.at_architect()
@@ -4420,18 +4406,38 @@ class AutopilotTests(V4Fixture, Base):
         self.assertEqual(hs.visual_items(self.proj), [])
 
     def test_review_scope_allows_dot_review(self):
-        """The REVIEW turn may touch REVIEW.md and the reviewer's .review/ probes, and nothing else."""
+        """The REVIEW turn may touch REVIEW.md, the reviewer's .review/ probes and LEARNINGS.md (its milestone retro on
+        SHIP, roadmap 4.6), and nothing else."""
         self.build(done=[1, 2])
         self.verified()
         st = hs.stage(self.proj)
         self.assertEqual(st["stage"], "REVIEW")
-        self.assertEqual(self.nx._turn_scope(st, self.state())["allowed"], ["REVIEW.md", ".review/"])
+        self.assertEqual(self.nx._turn_scope(st, self.state())["allowed"], ["REVIEW.md", ".review/", "LEARNINGS.md"])
         self.assertEqual(self.fields(self.go())["PHASE"], "REVIEW")
         self.write(".review/probe.py", "print(1)\n")
         self.write("REVIEW.md", self.REVIEW)
+        self.write("LEARNINGS.md", "# LEARNINGS - demo\n\n## M1 retro\n- worked: a\n- hurt: b\n- change: c\n")
         self.assertEqual(self.nx.snapshot_check(self.proj), [])
         self.write("src/store.js", "sneaky\n")
         self.assertEqual(self.nx.snapshot_check(self.proj), ["src/store.js"])
+
+    def test_review_retry_names_the_hunt_problem(self):
+        """A REVIEW.md that was not recorded (a lens line spelled 'ran') is named in the re-issued REVIEW task; the
+        first dispatch has no such paragraph."""
+        self.build(done=[1, 2])
+        self.verified()
+        first = self.go()
+        self.assertNotIn("do not redo the review", first)
+        self.write("REVIEW.md", self.REVIEW.replace("- runtime failures: checked", "- runtime failures: ran"))
+        self.nx._after_turn(self.proj, "demo", False)
+        again = self.go()
+        self.assertIn("REVIEW.md: ## Hunt is missing a line for: runtime failures", again)
+        self.assertIn("do not redo the review", again)
+        self.write("src/store.js", "changed after the bad review\n")  # other code: a fix-up must not bless it
+        self.verified()  # re-verified on the changed code, so REVIEW is due again with the old bad REVIEW.md on disk
+        out = self.go()
+        self.assertEqual(self.fields(out)["PHASE"], "REVIEW")
+        self.assertNotIn("do not redo the review", out)
 
     def test_review_without_hunt_goes_stuck_after_two_tries(self):
         """Spec 6: in-scope REVIEW turns whose REVIEW.md records no verdict count as failures; two end in STUCK."""
@@ -4692,16 +4698,7 @@ class AutopilotTests(V4Fixture, Base):
         self.assertTrue(line().endswith("autopilot on"), line())
 
     def test_bad_state_is_never_saved(self):
-        # (a) an old-format state: /go returns at once and writes nothing, even with a stage_attempts entry to clean up
-        self.write(".harness/state.json", json.dumps({"plan_sha256": "x", "steps": [], "stage_attempts": {"PLAN": 1}}))
-        before = self.state_bytes()
-        f = self.fields(self.go())
-        self.assertEqual(f["AGENT"], "none")
-        self.assertIn("v3 project", f["INSTRUCTION"])
-        self.assertEqual(self.state_bytes(), before)
-        # (b) its next command is the /new hint, never /go <slug>
-        self.assertEqual(f["NEXT COMMAND"], self.nx.NEW_HINT)
-        # an unreadable state: restore text, no save
+        # an unreadable state: /go returns at once, restore text, no save
         self.write(".harness/state.json", "{broken")
         f = self.fields(self.go())
         self.assertEqual(f["AGENT"], "none")

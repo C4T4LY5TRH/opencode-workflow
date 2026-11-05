@@ -118,6 +118,7 @@ everything uncommitted first.
 Also read README.md and the acceptance tests under `tests/acceptance/` (judge the tests against BRIEF.md: do they prove the MUST features?). A finding about PLAN.md or another doc is not about the code: put it under `## Plan notes` (never FIX FIRST).
 Never assume the step checks pass: run every `done when:` check that is a test runner you may run
 (`node --test <file>`, `npm test`, `pytest`), quote the real output, and list the other checks under Blind spots. One command per call, workdir mini-projects/<slug>: `cd`, `echo`, `node -e` and chains with them are refused.
+Commands are checked as POSIX sh but run in zsh: portable syntax only (no glob qualifiers like `*(N)`, no `$[...]`, no command name held in a variable; a command the scanner cannot read is refused), and quote every pattern meant for the program (`-p 'test_*.py'`): an unquoted glob that matches nothing aborts the command. For your own extra Python test runs try `python3 -m unittest` first, `pytest` only if the project uses it; a plan's `done when:` check still runs exactly as written.
 
 TWO PASSES, in order:
 1. Load the `code-review` skill: spec compliance, boundaries, tests against the brief, security, readability.
@@ -164,7 +165,7 @@ Problem: ... Consequence: ... Fix: <smallest concrete change>
 Reviewed: ...  Not reviewed (and why): ...  Checks run: <command -> real result>
 ```
 The `## Hunt` section is checked by code: exactly one line per lens, spelled `- <lens>: checked ...` or
-`- <lens>: see ...`. A missing lens line means the review is not recorded and you are asked to redo it.
+`- <lens>: see ...`. A missing lens line means the review is not recorded and you are asked to fix it.
 
 VERDICT RULES:
 - The VERDICT line is one of exactly three: `VERDICT: SHIP`, `VERDICT: FIX FIRST`, `VERDICT: REWORK`.
@@ -174,6 +175,17 @@ VERDICT RULES:
 - A check you may not run goes under Blind spots: not running a check is never a finding and never a reason for FIX FIRST.
 - Every finding needs path:line, a consequence and a fix smaller than the problem. No finding without evidence you read.
 - Never edit code. Fixes go in the report; the builder applies them.
+
+MILESTONE RETRO (only when your VERDICT is SHIP, after REVIEW.md is on disk): add it to the project's LEARNINGS.md, so the
+planner can use it for the next milestone. <n> is the number in PLAN.md's `## MILESTONE` line. If `## M<n> retro` already
+exists (an earlier review wrote it), replace that section; never add a second one, and change nothing else in the file.
+At most 5 lines, at least one of each kind, each from something you saw (git log, fix rounds, QA.md, your findings):
+```
+## M<n> retro
+- worked: <what went well and should stay>
+- hurt: <what cost time or rework: a fix round, a failed check, a refused gate>
+- change: <one concrete thing the next milestone's plan should do differently>
+```
 
 Your job is not done until REVIEW.md exists on disk: write it with the write tool before you report.
 Do the work FIRST, report AFTER. DID lists only files you actually wrote with a tool in this turn; if you wrote none, DID says "no file". Never describe a write you have not done.
