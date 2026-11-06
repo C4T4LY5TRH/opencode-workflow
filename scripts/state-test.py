@@ -43,9 +43,9 @@ It works.
 
 STEPS = [
     {"n": 1, "title": "store habits", "files": ["src/store.js", "test/store.test.js"],
-     "check": "node --test test/store.test.js", "covers": [], "proves": None, "after": None, "design": []},
+     "check": "node --test test/store.test.js", "covers": [], "proves": None, "design": []},
     {"n": 2, "title": "add the cli", "files": ["src/cli.js"], "check": "node src/cli.js --help",
-     "covers": [], "proves": None, "after": None, "design": []},
+     "covers": [], "proves": None, "design": []},
 ]
 
 BRIEF_OK = """# BRIEF — habits
@@ -146,6 +146,29 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def ship(proj, now):
+    """Record the milestone with no commit and no tag (what /ship yes does, minus the save point and the tag).
+    Returns (recorded, one-line message)."""
+    ctx, why = hs._ship_gate(proj)
+    if ctx is None:
+        return False, why
+    hs._archive_requests(proj, ctx["cm"])
+    return True, hs._record_shipped(proj, ctx["state"], ctx["cm"], ctx["d"], ctx["slug"])
+
+
+def verify_fresh(proj, state, ui=None):
+    """(True, ...) when the recorded VERIFY covers the current tree; otherwise (False, the first gap). A thin view of
+    `_verify_gap`, the function stage() routes on."""
+    d = hs.docs(proj)
+    if ui is None:
+        ui = bool(d["brief"] and d["brief"]["ui"])
+    steps = [s for s in state.get("steps", []) if isinstance(s, dict)]
+    cm = steps[0].get("milestone") if steps else None
+    acceptance = not (d["brief"] and d["arch"]) or bool(hs._must(d, cm))
+    kind, why = hs._verify_gap(state, steps, hs.tree_sha256(proj), ui, cm, acceptance)
+    return kind == "ok", why
+
+
 def human_env():
     env = dict(os.environ)
     env.pop("AGENT", None)
@@ -189,6 +212,10 @@ class Base(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def qa_body(self):
+        with open(os.path.join(WORKSHOP, ".opencode", "agents", "qa.md"), encoding="utf-8") as fh:
+            return fh.read()
 
     def write(self, rel, text):
         p = os.path.join(self.proj, rel)
@@ -319,6 +346,18 @@ class TreeTests(Base):
         self.write("src/b.js", "new\n")
         self.assertNotEqual(hs.tree_sha256(self.proj), changed)
 
+    def test_tree_hash_pinned_to_the_recorded_scheme(self):
+        # values computed with the code before file_hashes existed: recorded hashes in state.json stay valid
+        self.write("src/app.py", "print('hi')\n")
+        self.write("README.md", "docs\n")
+        self.write("tests/acceptance/a.py", "assert 1\n")
+        with open(os.path.join(self.proj, "z.bin"), "wb") as fh:
+            fh.write(bytes(range(256)))
+        self.assertEqual(hs.tree_sha256(self.proj),
+                         "b1e478c9f92d6975a42d702924dc1541b7887c16a31ccf81c972d0a0f48fa1c7")
+        self.assertEqual(hs.tests_sha256(self.proj),
+                         "bc6bc43a695ea479ec3401b1b0e22c16334ccc4090c88e6038f5e1b2e3115b8d")
+
     def test_tree_hash_without_git(self):
         self.write("src/a.js", "one\n")
         self.assertFalse(os.path.exists(os.path.join(self.proj, ".git")))
@@ -399,22 +438,19 @@ class StateTests(Base):
 
     def test_wrong_typed_state_is_unreadable_not_a_traceback(self):
         self.plan()
-        with open(os.path.join(self.proj, "PLAN.md"), "rb") as fh:
-            good = sha(fh.read())
         step = {"n": 1, "title": "t", "check": "true", "done_at": None, "attempts": 0, "last_failure": None}
         bad = {
-            "steps null": {"plan_sha256": good, "steps": None},
-            "steps int": {"plan_sha256": good, "steps": 5},
-            "steps string": {"plan_sha256": good, "steps": "abc"},
-            "step not dict": {"plan_sha256": good, "steps": [3]},
-            "attempts str": {"plan_sha256": good, "steps": [{**step, "attempts": "x"}]},
-            "attempts bool": {"plan_sha256": good, "steps": [{**step, "attempts": True}]},
-            "n str": {"plan_sha256": good, "steps": [{**step, "n": "1"}]},
-            "done_at int": {"plan_sha256": good, "steps": [{**step, "done_at": 5}]},
-            "fix_rounds str": {"plan_sha256": good, "steps": [step], "fix_rounds": "a"},
-            "review list": {"plan_sha256": good, "steps": [step], "review": [1]},
-            "review verdict int": {"plan_sha256": good, "steps": [step], "review": {"verdict": 3}},
-            "plan_sha256 int": {"plan_sha256": 7, "steps": [step]},
+            "steps null": {"steps": None},
+            "steps int": {"steps": 5},
+            "steps string": {"steps": "abc"},
+            "step not dict": {"steps": [3]},
+            "attempts str": {"steps": [{**step, "attempts": "x"}]},
+            "attempts bool": {"steps": [{**step, "attempts": True}]},
+            "n str": {"steps": [{**step, "n": "1"}]},
+            "done_at int": {"steps": [{**step, "done_at": 5}]},
+            "fix_rounds str": {"steps": [step], "fix_rounds": "a"},
+            "review list": {"steps": [step], "review": [1]},
+            "review verdict int": {"steps": [step], "review": {"verdict": 3}},
         }
         for name, state in bad.items():
             with self.subTest(name):
@@ -611,22 +647,6 @@ class CliTests(V4Fixture, Base):
         self.assertIn("REFUSED: cannot write state", r.stdout)
         self.assertNotIn("Traceback", r.stderr)
 
-    def test_plan_hash_alone_approves_nothing(self):
-        # a state with plan_sha256 and no approved_sha256 is not approved: no BUILD, nothing written by the reads
-        self.plan()
-        hs.save(self.proj, {"plan_sha256": "old"})
-        before = self.state_bytes()
-        self.assertFalse(hs.approved(self.proj))
-        self.assertNotEqual(hs.stage(self.proj)["stage"], "BUILD")
-        self.assertEqual(self.state_bytes(), before)
-        # an approval hash makes it approved, even with a plan_sha256 key left behind
-        self.fresh_proj()
-        self.v4()
-        st = hs.approve(self.proj, "t1")
-        st["plan_sha256"] = "left over"
-        hs.save(self.proj, st)
-        self.assertEqual(hs.stage(self.proj)["stage"], "BUILD")
-
     def test_unreadable_state_one_message(self):
         cp = "cp mini-projects/demo/.harness/state.json.bak mini-projects/demo/.harness/state.json"
         no_bak = "state unreadable: delete .harness/state.json, then /go demo"
@@ -649,7 +669,7 @@ class CliTests(V4Fixture, Base):
             with self.assertRaises(hs.PlanError) as cm:
                 hs.approve(self.proj, "t")
             self.assertEqual(str(cm.exception), with_bak)
-        self.assertEqual(hs.ship(self.proj, "t9")[1], f"NOT RECORDED: {with_bak}")  # the same one message
+        self.assertEqual(ship(self.proj, "t9")[1], f"NOT RECORDED: {with_bak}")  # the same one message
 
     def test_save_keeps_good_backup(self):
         hs.save(self.proj, {"a": 1})
@@ -665,38 +685,26 @@ class CliTests(V4Fixture, Base):
         self.assertEqual(hs.load(self.proj), {"a": 4})
         self.assertEqual([f for f in os.listdir(os.path.join(self.proj, ".harness")) if f.endswith(".tmp")], [])
 
+    def test_save_keeps_cost_written_after_load(self):
+        # the plugin adds cost between a router's load and save: the save must not undo it (the cost cap relies on it)
+        hs.save(self.proj, {"a": 1, "cost": {"milestone": "M1", "usd": 1.0, "project_usd": 1.0}})
+        state = hs.load(self.proj)
+        late = {"milestone": "M1", "usd": 3.5, "project_usd": 3.5}
+        self.write(".harness/state.json", json.dumps({"a": 1, "cost": late}))  # the plugin's write, after the load
+        state["a"] = 2
+        hs.save(self.proj, state)
+        self.assertEqual(hs.load(self.proj), {"a": 2, "cost": late})
+
     def test_cli_tree(self):
         self.write("src/a.js", "one\n")
         r = self.run_cli("tree", self.proj)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), hs.tree_sha256(self.proj))
 
-    def test_cli_review(self):
-        self.write("src/a.js", "one\n")
-        self.write("REVIEW.md", "## VERDICT: SHIP\n" + self.HUNT)
-        r = self.run_cli("review", self.proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.count("\n"), 1)  # one JSON line
-        self.assertEqual(json.loads(r.stdout), {"tree_sha256": hs.tree_sha256(self.proj), "verdict": "SHIP"})
-        self.write("REVIEW.md", "## VERDICT: FIX FIRST\n" + self.HUNT)
-        self.assertEqual(json.loads(self.run_cli("review", self.proj).stdout)["verdict"], "FIX FIRST")
-
-    def test_cli_review_without_verdict(self):
-        self.write("REVIEW.md", "looks fine to me\n")  # no VERDICT line
-        self.assertIsNone(json.loads(self.run_cli("review", self.proj).stdout)["verdict"])
-        os.remove(os.path.join(self.proj, "REVIEW.md"))  # no REVIEW.md at all
-        r = self.run_cli("review", self.proj)
-        self.assertEqual(r.returncode, 0)
-        self.assertIsNone(json.loads(r.stdout)["verdict"])
-
-    def test_cli_review_is_read_only(self):
-        self.write("REVIEW.md", "## VERDICT: SHIP\n" + self.HUNT)
-        self.run_cli("review", self.proj)
-        self.assertFalse(os.path.exists(os.path.join(self.proj, ".harness")))
-
     def test_cli_usage(self):
         self.assertEqual(self.run_cli().returncode, 2)
         self.assertEqual(self.run_cli("nope", self.proj).returncode, 2)
+        self.assertEqual(self.run_cli("approved", self.proj).returncode, 2)  # no CLI verb: the plugin calls the library
 
 
 class NextTests(V4Fixture, Base):
@@ -753,12 +761,11 @@ class NextTests(V4Fixture, Base):
         self.assertEqual((f["PHASE"], f["AGENT"]), ("REVIEW", "reviewer"))
         self.assertNotIn("STEP", f)
         self.assertIn("REVIEW.md", f["INSTRUCTION"])
-        self.assertIn("VERDICT:", f["INSTRUCTION"])
-        self.assertIn("## Blind spots", f["INSTRUCTION"])
+        self.assertIn("change no code", f["INSTRUCTION"])  # the verdict and section rules live in reviewer.md
         # live run 2026-10-25: reviewers chained `cd`/`echo`/`node -e`, every call was refused
         self.assertIn("one per call with workdir mini-projects/demo", f["INSTRUCTION"])
         self.assertEqual(f["NEXT COMMAND"], "/go demo")
-        # R24: every review (first one or after a fix round) runs the checks it may run; never "already passed"
+        # R24: a review after a fix round gets the same dispatch as the first one
         first = f["INSTRUCTION"]
         self.approved(steps_done=[1, 2], fix_rounds=1)
         f = self.fields(self.contract())
@@ -766,11 +773,8 @@ class NextTests(V4Fixture, Base):
         self.assertEqual(f["INSTRUCTION"], first)
         for text in (first, f["INSTRUCTION"]):
             self.assertNotIn("already passed", text)
-            self.assertIn("run every step check from PLAN.md that is a test runner you may run", text)
-            self.assertIn("list the others under Blind spots", text)
-            # live run 2026-10-29: Haiku turned the checks it may not run (`test -f`, `sh x | diff`) into a MAJOR
-            # three reviews in a row; no fix round can change that, so the loop never reached SHIP
-            self.assertIn("not running a check is never a finding and never a reason for FIX FIRST", text)
+        # live run 2026-10-29: Haiku turned the checks it may not run (`test -f`, `sh x | diff`) into a MAJOR
+        # three reviews in a row; no fix round can change that, so the loop never reached SHIP
         with open(os.path.join(WORKSHOP, ".opencode", "agents", "reviewer.md"), encoding="utf-8") as fh:
             body = fh.read()
         self.assertIn("not running a check is never a finding and never a reason for FIX FIRST", body)
@@ -811,9 +815,11 @@ class NextTests(V4Fixture, Base):
         ins = self.fields(self.contract())["INSTRUCTION"]
         self.assertIn("`node --test test/store.test.js`", ins)
         self.assertIn("workdir mini-projects/demo", ins)
-        self.assertIn("last command", ins.lower())
-        self.assertIn("no cd", ins.lower())
+        self.assertIn("as your last command", ins.lower())  # the plugin records only that run: kept in dispatch and body
         self.assertIn("relative to mini-projects/demo", ins)
+        with open(os.path.join(WORKSHOP, ".opencode", "agents", "builder.md"), encoding="utf-8") as fh:
+            body = fh.read()
+        self.assertIn("as your LAST command, with the shell\n   workdir `mini-projects/<slug>`. No `cd`, no wrapper", body)
         # the project name is the slug asked for, not a fixed one
         st = hs.load(self.proj)
         self.assertEqual(st["steps"][0]["check"], "node --test test/store.test.js")
@@ -827,14 +833,25 @@ class NextTests(V4Fixture, Base):
         hs.save(self.proj, st)
         text = self.contract()
         self.assertIn("LAST FAILURE:", text)
-        self.assertIn("LAST FAILURE: line 0\n  line 1", text)
-        self.assertIn("  line 9", text)
-        self.assertNotIn("line 10", text)  # first 10 lines only
-        self.assertEqual(self.fields(text)["AGENT"], "builder")
+        self.assertIn("LAST FAILURE: line 0\n  line 32", text)
+        self.assertIn("  line 39", text)
+        self.assertNotIn("line 31", text)  # the first line, then the last 9: the assertion is at the end
+        self.assertEqual(self.fields(text)["AGENT"], "builder")  # the injected line stays inside the block
         # attempts > 0 but nothing recorded: no empty block
         st["steps"][0]["last_failure"] = None
         hs.save(self.proj, st)
         self.assertNotIn("LAST FAILURE:", self.contract())
+
+    def test_last_failure_short_output_shown_once(self):
+        self.approved()
+        st = hs.load(self.proj)
+        st["steps"][0]["attempts"] = 1
+        st["steps"][0]["last_failure"] = "exit 1\nAssertionError: 2 != 3"
+        hs.save(self.proj, st)
+        block = self.contract().split("LAST FAILURE:")[1].split("\nAGENT:")[0]
+        # the whole output is shown, each line once (the builder's INSTRUCTION repeats it as data, outside the block)
+        self.assertEqual(block.count("AssertionError"), 1)
+        self.assertEqual(block.count("exit 1"), 1)
 
     def test_next_fix_increments_rounds(self):
         self.approved(steps_done=[1, 2], verdict="FIX FIRST", fix_rounds=0)
@@ -911,8 +928,45 @@ class NextTests(V4Fixture, Base):
         self.assertEqual(r.stderr, "")
 
 
+    def test_stuck_after_automatic_stage_names_go_retry(self):
+        """A18: VERIFY failed too often: only /go retry clears it, so the contract and /status say that."""
+        import status as stm
+        import next as nx
+        self.approved(steps_done=[1, 2])
+        st = hs.load(self.proj)
+        st["stage_attempts"] = {"VERIFY": hs.STAGE_LIMIT}
+        st.pop("verify", None)
+        hs.save(self.proj, st)
+        r = hs.stage(self.proj)
+        self.assertEqual((r["stage"], r["at"]), ("STUCK", None))
+        self.assertTrue(r["reason"].endswith("then /go retry"))
+        self.assertEqual(self.fields(self.contract())["NEXT COMMAND"], "/go retry")
+        self.assertEqual(stm.info(self.shop, "demo")["next"], "/go retry")
+        self.assertEqual(nx.next_command("demo", "STUCK", None, None), "/status demo")
+
+    def test_stuck_after_fix_rounds_still_says_fix_by_hand(self):
+        self.approved(steps_done=[1, 2], verdict="REWORK", fix_rounds=2)
+        self.assertEqual(hs.stage(self.proj)["stage"], "STUCK")
+        nxt = self.fields(self.contract())["NEXT COMMAND"]
+        self.assertTrue(nxt.startswith("read mini-projects/demo/REVIEW.md, fix by hand"), nxt)
+
+
+    def test_autopilot_stop_at_automatic_stage_stuck_names_go_retry(self):
+        """A18: autopilot on, VERIFY hit its limit: the stop contract's NEXT COMMAND is /go retry, not /status."""
+        self.approved(steps_done=[1, 2])
+        st = hs.load(self.proj)
+        st["stage_attempts"] = {"VERIFY": hs.STAGE_LIMIT}
+        st.pop("verify", None)
+        st["autopilot"] = {"on": True, "milestone": "M1", "continue": True, "turns": 1}
+        hs.save(self.proj, st)
+        f = self.fields(self.contract())
+        self.assertIn("autopilot stopped at stage STUCK", f["INSTRUCTION"])
+        self.assertEqual(f["NEXT COMMAND"], "/go retry")
+        self.assertFalse(hs.load(self.proj)["autopilot"]["on"])
+
+
 class StatusTests(V4Fixture, Base):
-    """scripts/status.py: /status text and the read-only dashboard (spec section 9). Fixture workshop only."""
+    """scripts/status.py: /status text (spec section 9). Fixture workshop only."""
 
     def setUp(self):
         super().setUp()
@@ -974,10 +1028,10 @@ class StatusTests(V4Fixture, Base):
         self.write(".harness/lock", json.dumps({"stage": "FIX", "at": time.strftime(hs.TIME_FMT, time.gmtime())}))
         self.write(".harness/snapshot.json", json.dumps({"stage": "FIX", "kind": "stage", "files": {}}))
         self.assertEqual(hs.fix_running(self.proj), 2)
-        for out in (stm.text(self.shop, "demo"), stm.text(self.shop), stm.html(self.shop)):
+        for out in (stm.text(self.shop, "demo"), stm.text(self.shop)):
             self.assertIn("FIX round 2/2 running", out)
             self.assertNotIn("fix rounds used", out)
-            self.assertNotIn("STUCK", out.split("</style>")[-1])  # the CSS names the class, the page must not use it
+            self.assertNotIn("STUCK", out)
         self.assertIn("wait for FIX round 2/2 to finish, then /status demo", stm.text(self.shop))
         self.assertIn("demo  FIX", stm.text(self.shop, "demo"))
         self.assertEqual(hs.stage(self.proj)["stage"], "STUCK")  # the router is unchanged
@@ -990,20 +1044,21 @@ class StatusTests(V4Fixture, Base):
         self.assertIn("2 fix rounds used", stm.text(self.shop, "demo"))
         self.assertIn("STUCK", stm.text(self.shop, "demo"))
         self.assertIn("STUCK", stm.text(self.shop))
-        self.assertIn('badge STUCK', stm.html(self.shop))
 
     def test_readonly_agents_read_tool_line(self):
-        """F4: each read-only agent prompt carries one line telling it to read line ranges with the read tool."""
+        """F4, A5: the read-tool line (no `sed -n`) lives once, in AGENTS.md, which every agent session loads."""
+        with open(os.path.join(WORKSHOP, "AGENTS.md"), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        self.assertEqual(sum("with the read tool (offset/limit)" in l for l in lines), 1)
         d = os.path.join(WORKSHOP, ".opencode", "agents")
-        for name in ("planner", "critic", "orchestrator", "reviewer", "designer", "architect", "brainstormer", "researcher", "inspector"):
-            with open(os.path.join(d, name + ".md"), encoding="utf-8") as fh:
-                lines = fh.read().splitlines()
-            self.assertEqual(sum("use the read tool with offset/limit" in l for l in lines), 1, name)
+        for name in sorted(os.listdir(d)):
+            with open(os.path.join(d, name), encoding="utf-8") as fh:
+                self.assertNotIn("use the read tool with offset/limit", fh.read(), name)
 
     def test_orchestrator_offers_only_named_commands(self):
         """F5: the orchestrator may offer only commands that NEXT COMMAND or HANDBOOK names."""
-        with open(os.path.join(WORKSHOP, ".opencode", "agents", "orchestrator.md"), encoding="utf-8") as fh:
-            self.assertIn("offer only commands that NEXT COMMAND or HANDBOOK names", fh.read())
+        with open(os.path.join(WORKSHOP, "AGENTS.md"), encoding="utf-8") as fh:  # A7: one home, loaded by every session
+            self.assertIn("Offer only commands that NEXT COMMAND or HANDBOOK names", fh.read())
 
     def test_status_ignores_template_and_hidden_dirs(self):
         for d in ("_template", ".hidden", "_x"):
@@ -1014,7 +1069,6 @@ class StatusTests(V4Fixture, Base):
         out = self.st().text(self.shop)
         self.assertIn("no projects yet: /new", out)
         self.assertNotIn("Traceback", out)
-        self.assertIn("no projects yet", self.st().html(self.shop))
 
     def test_status_no_mini_projects_dir(self):
         shutil.rmtree(os.path.join(self.shop, "mini-projects"))
@@ -1039,21 +1093,18 @@ class StatusTests(V4Fixture, Base):
         stt = self.approved(steps_done=[1])
         stt.update(cost={"milestone": "M1", "usd": 1.4, "project_usd": 3.1}, cost_cap_usd=7.77,
                    autopilot={"on": True, "continue": True, "milestone": "M1", "turns": 1})
-        hs.save(self.proj, stt)
+        self.write(".harness/state.json", json.dumps(stt))  # the plugin's way: hs.save keeps the on-disk cost
         out = self.st().text(self.shop, "demo")
         self.assertEqual(out.splitlines()[0], "STATUS: demo  BUILD  steps 1 done  1/2  $1.40  autopilot on")
         self.assertIn("batch: step 2", out)
         self.assertIn("cost: $1.40 this milestone, $3.10 this project", out)
         row = next(l for l in self.st().text(self.shop).splitlines() if l.startswith("demo"))
         self.assertIn("autopilot on  $1.40 milestone / $3.10 project", row)
-        page = self.st().html(self.shop)
-        for needle in ("autopilot on", "$1.40 this milestone", "$3.10 this project", "batch: step 2"):
-            self.assertIn(needle, page)
-        for shown in (out, row, page):
+        for shown in (out, row):
             self.assertNotIn("7.77", shown)
         # another milestone's cost is not this milestone's; autopilot off is said too
         stt.update(cost={"milestone": "M0", "usd": 2.5, "project_usd": 3.1}, autopilot={"on": False, "continue": False})
-        hs.save(self.proj, stt)
+        self.write(".harness/state.json", json.dumps(stt))
         out = self.st().text(self.shop, "demo")
         self.assertEqual(out.splitlines()[0], "STATUS: demo  BUILD  steps 1 done  1/2  autopilot off")
         self.assertIn("cost: $0.00 this milestone, $3.10 this project", out)
@@ -1095,43 +1146,12 @@ class StatusTests(V4Fixture, Base):
                 out = self.st().text(self.shop, slug)
                 self.assertIn("state unreadable: restore the last good copy", out)
                 self.assertNotIn("Traceback", out)
-        self.assertIn("state unreadable", self.st().html(self.shop))
         # a wrong-typed field is also a message, and it does not hide the other project
         self.second_project()
         self.write(".harness/state.json", '{"steps": "oops"}')
         out = self.st().text(self.shop)
         self.assertIn("state unreadable", out)
         self.assertRegex(out, r"(?m)^other\s+SHIP\b")
-
-    def test_status_html(self):
-        self.approved(steps_done=[1], attempts={2: 1})
-        stt = hs.load(self.proj)
-        stt["steps"][1]["last_failure"] = "boom failure text"
-        hs.save(self.proj, stt)
-        self.second_project()
-        page = self.st().html(self.shop)
-        for needle in ("demo", "other", "Track habits.", "ship a thing", "boom failure text", "safe store", "SHIP"):
-            self.assertIn(needle, page)
-        self.assertEqual(page.count("<progress"), 2)
-        self.assertIn('<meta http-equiv="refresh" content="5">', page)
-        self.assertIn("prefers-color-scheme: dark", page)
-        for banned in ("<button", "<form", "<script", "http://", "https://"):
-            self.assertNotIn(banned, page)
-
-    def test_status_html_escapes_everything_from_the_project(self):
-        evil = "<script>alert(1)</script>"
-        stt = self.approved(steps_done=[1, 2], verdict="FIX FIRST", brief=BRIEF_OK.replace("Track habits.", "<i>goal</i>"))
-        stt["steps"][0]["title"] = evil
-        stt["steps"][0]["check"] = "echo '<b>x</b>'"
-        stt["steps"][0]["attempts"] = 1
-        stt["steps"][0]["last_failure"] = "<img src=x onerror=alert(2)>"
-        hs.save(self.proj, stt)
-        self.write("REVIEW.md", "VERDICT: FIX FIRST\n<u>finding</u>\n")
-        page = self.st().html(self.shop)
-        for raw in ("<script", "<img", "<b>x</b>", "<i>goal</i>", "<u>finding</u>"):
-            self.assertNotIn(raw, page)
-        self.assertIn("&lt;script&gt;", page)
-        self.assertIn("&lt;u&gt;finding", page)  # the findings really were shown (stage FIX), escaped
 
     def test_status_bench_line(self):
         self.assertIn("bench: not run yet", self.st().text(self.shop))
@@ -1154,13 +1174,6 @@ class StatusTests(V4Fixture, Base):
         self.assertIn("BUILD", run("demo").stdout)
         self.assertEqual(run("a", "b").returncode, 0)
         self.assertIn("usage", run("a", "b").stdout.lower())
-        dash = os.path.join(self.shop, ".harness", "dashboard.html")
-        self.assertFalse(os.path.exists(dash))
-        r = run("--html")
-        self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
-        with open(dash, encoding="utf-8") as fh:
-            self.assertIn('content="5"', fh.read())
-        self.assertEqual([f for f in os.listdir(os.path.dirname(dash)) if f.endswith(".tmp")], [])
 
 
 class NewProjectTests(Base):
@@ -1322,13 +1335,12 @@ class ShipTemplateTests(V4Fixture, Base):
 
     def test_ship_template_has_two_forms(self):
         # task 9: `/ship [slug]` is the checklist (records nothing), `/ship [slug] yes` commits, tags and records.
-        # R42: the status line first (item 1 reads it), the script after it, the dashboard last, all in one block
+        # R42: the status line first (item 1 reads it), the script after it, all in one block
         self.assertEqual(self.snippet(), 'R="$(python3 scripts/harness_state.py shiptarget "$ARGUMENTS")" '
                          '&& S="${R% *}" && M="${R##* }" && { python3 scripts/status.py "$S"; '
                          'python3 scripts/harness_state.py ship "mini-projects/$S" "$M"; '
                          '[ "$M" = yes ] || { echo "git status --short:"; git -c core.fsmonitor=false '
-                         '-c safe.bareRepository=explicit -C "mini-projects/$S" status --short 2>&1; }; }; '
-                         'python3 scripts/status.py --html >/dev/null 2>&1; true')
+                         '-c safe.bareRepository=explicit -C "mini-projects/$S" status --short 2>&1; }; }; true')
         self.workshop_scripts()
         self.write("src/app.js", "x\n")
         self.ready_to_ship()
@@ -1647,30 +1659,16 @@ class DocTests(unittest.TestCase):
                 self.assertIs(hd.paths_overlap(b, a), want)
         self.assertEqual(hd.norm_path("./Src//Quiz/"), "src/quiz/")
 
-    PLAN_AF = PLAN_V4.replace("- files: src/cli.js", "- files: src/cli/, README.md\n- after: none")
-
-    def test_plan_after_and_folders(self):
-        steps = hd.parse_plan(PLAN_V4)
-        self.assertEqual([s["after"] for s in steps], [None, None])
-        steps = hd.check_plan(self.PLAN_AF, self.arch(), "M1")
-        self.assertEqual(steps[1]["after"], [])
+    def test_plan_folders_and_old_after_lines(self):
+        plan = PLAN_V4.replace("- files: src/cli.js", "- files: src/cli/, README.md")
+        steps = hd.check_plan(plan, self.arch(), "M1")
         self.assertEqual(steps[1]["files"], ["src/cli/", "README.md"])
-        three = self.PLAN_AF.replace("## ACCEPTANCE", "### 3. more\n- files: src/m.js\n- after: 1, 2\n- covers: F1\n"
-                                     "- done when: `node src/m.js`\n## ACCEPTANCE")
-        self.assertEqual(hd.check_plan(three, self.arch(), "M1")[2]["after"], [1, 2])
-        # PL4: a malformed `after:` token is parsed and ignored, not an error
-        bad = hd.parse_plan(self.PLAN_AF.replace("after: none", "after: one"))
-        self.assertEqual(bad[1]["after"], [])
-
-    def test_old_after_lines_ignored(self):
-        a = self.arch()
-        # `after:` lines from older plans (forward, unknown or `none`) parse and are never checked or routed on
-        plan = PLAN_V4.replace("- covers: F1", "- covers: F1\n- after: 2", 1).replace("- proves: R1", "- proves: R1\n- after: 5")
-        hd.check_plan(plan, a, "M1")
-        steps = hd.parse_plan(plan)
-        self.assertEqual([s["n"] for s in steps], list(range(1, len(steps) + 1)))
-        self.assertEqual((steps[0]["after"], steps[1]["after"]), ([5], [2]))
-        hd.check_plan(PLAN_V4.replace("- proves: R1", "- proves: R1\n- after: none"), a, "M1")
+        self.assertNotIn("after", steps[0])
+        # `after:` lines from older plans (a number, a list, `none`, junk) are unknown lines: ignored, never an error
+        old = PLAN_V4.replace("- covers: F1", "- covers: F1\n- after: 2", 1).replace("- proves: R1", "- proves: R1\n- after: one")
+        hd.check_plan(old, self.arch(), "M1")
+        self.assertEqual([s["n"] for s in hd.parse_plan(old)], list(range(1, len(steps) + 1)))
+        hd.check_plan(PLAN_V4.replace("- proves: R1", "- proves: R1\n- after: none"), self.arch(), "M1")
 
     def test_plan_refuses_duplicate_checks(self):
         a = self.arch()
@@ -1927,6 +1925,19 @@ class ApprovalV4Tests(V4Fixture, Base):
         os.remove(os.path.join(self.proj, "design", "mockups", "home.html"))  # a listed mockup that is gone
         self.assertIsNone(hs.approval_sha256(self.proj))
 
+    def test_approval_hash_covers_dot_slash_mockups(self):
+        self.v4()
+        self.design_files()
+        plain = hs.approval_sha256(self.proj)
+        for spelling in ("./design/mockups/home.html", "Design/Mockups/home.html"):
+            self.write("DESIGN.md", DocTests.DESIGN_OK.replace("- Home: design/mockups/home.html", f"- Home: {spelling}"))
+            h = hs.approval_sha256(self.proj)
+            self.write("design/mockups/home.html", "<h1>changed</h1>\n")
+            self.assertNotEqual(hs.approval_sha256(self.proj), h, spelling)
+            self.write("design/mockups/home.html", "<h1>home</h1>\n")
+        self.write("DESIGN.md", DocTests.DESIGN_OK)
+        self.assertEqual(hs.approval_sha256(self.proj), plain)
+
     def test_design_check_refuses_script_mockup(self):
         self.v4()
         self.design_files()
@@ -2053,13 +2064,6 @@ class ApprovalV4Tests(V4Fixture, Base):
         self.assertEqual((st["fix_rounds"], st["stage_attempts"], st["revise"], st["critique_requested"]),
                          (0, {}, None, None))
         self.assertEqual(hs.load(self.proj), st)
-        self.assertTrue(hs.approved(self.proj))
-
-    def test_approve_writes_no_plan_hash(self):
-        self.v4()
-        st = hs.approve(self.proj, "t1")
-        self.assertNotIn("plan_sha256", st)  # the plugin's plan gate asks `approved`, never this key
-        self.assertNotIn("plan_sha256", hs.approve(self.proj, "t2"))
         self.assertTrue(hs.approved(self.proj))
 
     def test_approve_v4_resets_counters_and_clears_flags(self):
@@ -2226,27 +2230,8 @@ class ApprovalV4Tests(V4Fixture, Base):
         st["milestones_shipped"] = ["M1"]
         hs.save(self.proj, st)
         self.assertFalse(hs.approved(self.proj))  # H24: the shipped milestone's plan is no longer an approval
-
-    def test_approved_verb_plan_hash_and_bad_state(self):
-        self.plan()
-        hs.save(self.proj, {"plan_sha256": sha(PLAN.encode()), "steps": []})
-        self.assertFalse(hs.approved(self.proj))  # a plan hash alone approves nothing
-        self.write(".harness/state.json", "{")
+        self.write(".harness/state.json", "{")  # an unreadable state is never an approval (fail closed)
         self.assertFalse(hs.approved(self.proj))
-
-    def test_cli_approved_prints_yes_no_read_only(self):
-        def cli(*a, env=None):
-            return subprocess.run([sys.executable, os.path.join(HERE, "harness_state.py"), *a],
-                                  capture_output=True, text=True, env=env or human_env())
-        r = cli("approved", self.proj)
-        self.assertEqual((r.returncode, r.stdout), (0, "no\n"))
-        self.assertFalse(os.path.exists(os.path.join(self.proj, ".harness")))
-        self.v4()
-        hs.approve(self.proj, "t1")
-        before = self.state_bytes()
-        r = cli("approved", self.proj, env={**human_env(), "AGENT": "1"})  # read-only: an agent shell may ask
-        self.assertEqual((r.returncode, r.stdout), (0, "yes\n"))
-        self.assertEqual(self.state_bytes(), before)
 
     def test_cli_approve_v4_output(self):
         self.v4()
@@ -2265,13 +2250,13 @@ class ApprovalV4Tests(V4Fixture, Base):
 
     def test_ship_records_milestone(self):
         self.ready_to_ship()
-        ok, msg = hs.ship(self.proj, "t9")
+        ok, msg = ship(self.proj, "t9")
         self.assertEqual((ok, msg), (True, "MILESTONE SHIPPED: M1. Next: /go demo plans M2."))
         st = hs.load(self.proj)
         self.assertEqual(st["milestones_shipped"], ["M1"])
         self.assertIsNone(st["critique_requested"])
         self.assertFalse(hs.approved(self.proj))
-        self.assertFalse(hs.ship(self.proj, "t10")[0])  # M2 is the current milestone and has no approved plan
+        self.assertFalse(ship(self.proj, "t10")[0])  # M2 is the current milestone and has no approved plan
         self.assertEqual(hs.load(self.proj)["milestones_shipped"], ["M1"])
 
     def test_ship_last_milestone(self):
@@ -2288,7 +2273,7 @@ class ApprovalV4Tests(V4Fixture, Base):
         self.write("QA.md", QA_OK.replace("adds\n", "adds\n- F3: tests/acceptance/list.test.js — lists\n"))
         st["review"] = {"tree_sha256": hs.tree_sha256(self.proj), "verdict": "SHIP", "at": "t"}
         hs.save(self.proj, st)
-        self.assertEqual(hs.ship(self.proj, "t9"), (True, "MILESTONE SHIPPED: M1. All milestones shipped."))
+        self.assertEqual(ship(self.proj, "t9"), (True, "MILESTONE SHIPPED: M1. All milestones shipped."))
 
     def test_ship_refuses_without_blind_spots(self):
         # 2a(vii): /ship's checklist item 2 fails without the section, so the milestone must not be recorded either;
@@ -2304,7 +2289,7 @@ class ApprovalV4Tests(V4Fixture, Base):
                     os.remove(os.path.join(self.proj, "REVIEW.md"))
                 else:
                     self.write("REVIEW.md", review)
-                ok, msg = hs.ship(self.proj, "t9")
+                ok, msg = ship(self.proj, "t9")
                 self.assertEqual((ok, msg), (False, "NOT RECORDED: REVIEW.md has no '## Blind spots' section (what the "
                                                     "review could not check): /review demo, then /ship demo"))
                 self.assertNotIn("milestones_shipped", hs.load(self.proj))
@@ -2314,7 +2299,7 @@ class ApprovalV4Tests(V4Fixture, Base):
             with self.subTest(name):
                 self.fresh_proj()
                 self.ready_to_ship(**kw)
-                ok, msg = hs.ship(self.proj, "t9")
+                ok, msg = ship(self.proj, "t9")
                 self.assertFalse(ok)
                 self.assertTrue(msg.startswith("NOT RECORDED: "), msg)
                 self.assertNotIn("milestones_shipped", hs.load(self.proj))
@@ -2322,19 +2307,19 @@ class ApprovalV4Tests(V4Fixture, Base):
         self.fresh_proj()
         self.ready_to_ship()
         self.write("src/new.js", "changed\n")
-        self.assertFalse(hs.ship(self.proj, "t9")[0])
+        self.assertFalse(ship(self.proj, "t9")[0])
         # a FIX FIRST review is not SHIP
         st = hs.load(self.proj)
         st["review"] = {"tree_sha256": hs.tree_sha256(self.proj), "verdict": "FIX FIRST", "at": "t"}
         hs.save(self.proj, st)
-        self.assertFalse(hs.ship(self.proj, "t9")[0])
+        self.assertFalse(ship(self.proj, "t9")[0])
         self.assertNotIn("milestones_shipped", hs.load(self.proj))
 
     def test_ship_refuses_changed_documents_and_no_state(self):
-        self.assertFalse(hs.ship(self.proj, "t")[0])
+        self.assertFalse(ship(self.proj, "t")[0])
         self.ready_to_ship()
         self.write("PLAN.md", PLAN_V4 + "\n")  # approval revoked after the review
-        ok, msg = hs.ship(self.proj, "t9")
+        ok, msg = ship(self.proj, "t9")
         self.assertFalse(ok)
         self.assertIn("NOT RECORDED", msg)
 
@@ -2343,18 +2328,18 @@ class ApprovalV4Tests(V4Fixture, Base):
         self.ready_to_ship()
         hs.save(self.proj, {**hs.load(self.proj), "critique_requested": 1})  # what /critique records
         before = self.state_bytes()
-        self.assertEqual(hs.ship(self.proj, "t9"),
+        self.assertEqual(ship(self.proj, "t9"),
                          (False, "NOT RECORDED: a critique round you asked for has not run: /go demo"))
         self.assertEqual(self.state_bytes(), before)  # the request is kept
         # the round came with a serious point nobody answered yet (stage ANSWER): still not recorded
         self.write("CRITIQUE.md", CRITIQUE_OK + "## ROUND 2 — M1\n- C3 [serious] [plan] thin — fix: more\n")
-        ok, msg = hs.ship(self.proj, "t9")
+        ok, msg = ship(self.proj, "t9")
         self.assertFalse(ok)
         self.assertIn("C3 (plan) unanswered in PLAN.md", msg)
         self.assertEqual(self.state_bytes(), before)
         # a round with nothing serious: the milestone ships and the request is done
         self.write("CRITIQUE.md", CRITIQUE_OK + "## ROUND 2 — M1\n- C3 [minor] [plan] thin — fix: more\n")
-        self.assertEqual(hs.ship(self.proj, "t9")[0], True)
+        self.assertEqual(ship(self.proj, "t9")[0], True)
         self.assertIsNone(hs.load(self.proj)["critique_requested"])
 
     def put_lock(self, minutes_old, raw=None):
@@ -2385,13 +2370,13 @@ class ApprovalV4Tests(V4Fixture, Base):
         self.ready_to_ship()
         at = self.put_lock(1)
         before = self.state_bytes()
-        ok, msg = hs.ship(self.proj, "t9")
+        ok, msg = ship(self.proj, "t9")
         self.assertFalse(ok)
         self.assertTrue(msg.startswith(f"NOT RECORDED: a chain is running (stage CRITIQUE since {at})"), msg)
         self.assertIn("then /ship demo", msg)
         self.assertEqual(self.state_bytes(), before)
         self.put_lock(31)
-        self.assertTrue(hs.ship(self.proj, "t9")[0])
+        self.assertTrue(ship(self.proj, "t9")[0])
 
     def test_ship_cli_refuses_agent_shell_and_foreign_dir(self):
         shop = self.tmp  # a workshop-shaped fixture: <shop>/scripts + <shop>/mini-projects/demo
@@ -2701,25 +2686,17 @@ class StageTests(V4Fixture, Base):
         self.expect("SHIP", milestone="M1")
         # M1 shipped: PLAN.md still names it, so M2 needs a plan; then both shipped is DONE (row 5)
         self.write("REVIEW.md", self.REVIEW)  # ship() needs its '## Blind spots' section (2a vii)
-        self.assertTrue(hs.ship(self.proj, "t9")[0])
+        self.assertTrue(ship(self.proj, "t9")[0])
         self.expect("PLAN", milestone="M2")
         self.mutate(milestones_shipped=["M1", "M2"])
         self.expect("DONE", milestone=None, step=None)
 
-    def test_stage_design_needs_a_designer_agent(self):
-        # a workshop-shaped project: <tmp>/mini-projects/demo, so the designer.md lookup has a workshop
-        self.proj = os.path.join(self.tmp, "mini-projects", "demo")
-        os.makedirs(os.path.join(self.proj, "src"))
+    def test_stage_design_for_a_ui_project(self):
         self.write("BRIEF.md", BRIEF_OK.replace("- ui: no", "- ui: yes"))
         self.write("ARCHITECTURE.md", ARCH_UI + self.ANSWER + "\n")
         self.write("PLAN.md", PLAN_V4_UI)
         self.write("CRITIQUE.md", CRITIQUE_OK)
         self.assertTrue(hs.lock_brief(self.proj, "t0")[0])
-        self.expect("DECIDE")  # no designer agent: DESIGN is inactive
-        agents = os.path.join(self.tmp, ".opencode", "agents")
-        os.makedirs(agents)
-        with open(os.path.join(agents, "designer.md"), "w") as fh:
-            fh.write("---\n---\n")
         self.expect("DESIGN", milestone="M1")
         self.write("DESIGN.md", "## SUMMARY\nx\n")
         self.expect("DESIGN")  # a DESIGN.md that fails its check goes back to the designer
@@ -2728,24 +2705,14 @@ class StageTests(V4Fixture, Base):
             self.write(f"design/mockups/{name}.html", "<h1>x</h1>\n")
         self.expect("DECIDE")
 
-    def test_ui_plan_needs_valid_design_md_when_designer_exists(self):
-        """R14: with a designer agent, a ui plan is not checked (so not approvable) until DESIGN.md is valid."""
-        self.proj = os.path.join(self.tmp, "mini-projects", "demo")
-        os.makedirs(os.path.join(self.proj, "src"))
+    def test_ui_plan_needs_valid_design_md(self):
+        """R14: a ui plan is not checked (so not approvable) until DESIGN.md is valid."""
         self.write("BRIEF.md", BRIEF_OK.replace("- ui: no", "- ui: yes"))
         self.write("ARCHITECTURE.md", ARCH_UI + self.ANSWER + "\n")
         self.write("PLAN.md", PLAN_V4)  # a ui plan with no design: line at all
         self.write("CRITIQUE.md", CRITIQUE_OK)
         self.assertTrue(hs.lock_brief(self.proj, "t0")[0])
         want = "PLAN.md: not checked until DESIGN.md is valid"
-        # no designer.md in the workshop: no design to cite, the plan checks as before
-        d = hs.docs(self.proj)
-        self.assertIsNotNone(d["plan_steps"])
-        self.assertEqual(hs.approve(self.proj, "t1")["approved_at"], "t1")
-        agents = os.path.join(self.tmp, ".opencode", "agents")
-        os.makedirs(agents)
-        with open(os.path.join(agents, "designer.md"), "w") as fh:
-            fh.write("---\n---\n")
         for design in (None, "no summary here\n"):
             with self.subTest(design=design):
                 if design:
@@ -2772,12 +2739,8 @@ class StageTests(V4Fixture, Base):
         self.assertEqual([s["design"] for s in steps], [[], []])
 
     def ui_design_project(self, fit="- agree"):
-        self.proj = os.path.join(self.tmp, "mini-projects", "demo")
+        self.proj = os.path.join(self.tmp, "mini-projects", "demo")  # workshop-shaped, so /go finds it
         os.makedirs(os.path.join(self.proj, "src"))
-        agents = os.path.join(self.tmp, ".opencode", "agents")
-        os.makedirs(agents)
-        with open(os.path.join(agents, "designer.md"), "w") as fh:
-            fh.write("---\n---\n")
         self.write("BRIEF.md", BRIEF_OK.replace("- ui: no", "- ui: yes"))
         self.write("ARCHITECTURE.md", ARCH_UI + self.ANSWER + "\n")
         self.write("PLAN.md", PLAN_V4_UI)
@@ -2879,7 +2842,7 @@ class StageTests(V4Fixture, Base):
 
     def test_milestone_progression(self):
         self.ready_to_ship()
-        self.assertTrue(hs.ship(self.proj, "t9")[0])
+        self.assertTrue(ship(self.proj, "t9")[0])
         r = self.expect("PLAN", milestone="M2")
         self.assertIn("M2", r["reason"])
         self.write("PLAN.md", PLAN_V4.replace("M1: prove R1 + walking skeleton", "M2: listing")
@@ -3017,12 +2980,9 @@ class ChainTests(V4Fixture, Base):
         self.assertEqual((f["PHASE"], f["AGENT"], f["NEXT COMMAND"]), ("DONE", "none", "none: project done"))
         self.assertIn("every milestone shipped", self.go())
 
-    def test_design_chain_when_a_designer_exists(self):
+    def test_design_chain_for_a_ui_project(self):
         self.write("BRIEF.md", BRIEF_OK.replace("- ui: no", "- ui: yes"))
         self.assertTrue(hs.lock_brief(self.proj, "t0")[0])
-        self.assertEqual(self.fields(self.go())["AGENT"], "architect, planner, critic, architect, planner")
-        os.makedirs(os.path.join(self.shop, ".opencode", "agents"))
-        open(os.path.join(self.shop, ".opencode", "agents", "designer.md"), "w").close()
         self.assertEqual(self.fields(self.go())["AGENT"],
                          "architect, designer, planner, critic, architect, planner, designer")
         self.write("ARCHITECTURE.md", ARCH_UI + self.ANSWER + "\n")  # ui: yes needs the preview line (Task 3)
@@ -3034,8 +2994,10 @@ class ChainTests(V4Fixture, Base):
         self.write("ARCHITECTURE.md", ARCH_UI + self.ANSWER + "\n")
         self.write("DESIGN.md", DocTests.DESIGN_OK)
         item = next(l for l in self.go().splitlines() if "@planner" in l)
-        for want in ("DESIGN.md (its SCREENS names)", "design/mockups/", "'- design: <names>'"):
+        for want in ("DESIGN.md (its SCREENS names)", "design/mockups/"):
             self.assertIn(want, item)
+        with open(os.path.join(WORKSHOP, ".opencode", "agents", "planner.md"), encoding="utf-8") as fh:
+            self.assertIn("every step that builds UI has a `- design: <names>` line", " ".join(fh.read().split()))
         self.write("BRIEF.md", BRIEF_OK)  # a non-UI project: the planner is not told about DESIGN.md
         self.write("ARCHITECTURE.md", ARCH_OK + self.ANSWER + "\n")
         os.remove(os.path.join(self.proj, "DESIGN.md"))
@@ -3067,12 +3029,22 @@ class ChainTests(V4Fixture, Base):
             self.assertIn(f"Before you finish, run `python3 scripts/status.py demo --check {fname}` with no workdir "
                           f"and fix {fname} until it prints exactly OK.", item)
         arch = items[0]
-        for want in ("mini-projects/demo/ARCHITECTURE.md", "RISKS", "MILESTONES", "DECISIONS", "R1", "write tool",
-                     "untrusted data"):
+        for want in ("mini-projects/demo/ARCHITECTURE.md", "write tool", "untrusted data"):
             self.assertIn(want, arch)
-        self.assertIn("as if you are inside that folder", items[1])
-        self.assertIn("ROUND", items[2])
+        self.assertNotIn("RISKS", arch)  # the file formats live in the agents' own bodies
+        agents = os.path.join(WORKSHOP, ".opencode", "agents")
+        def body(name):
+            with open(os.path.join(agents, name + ".md"), encoding="utf-8") as fh:
+                return " ".join(fh.read().split())
+        for want in ("RISKS", "MILESTONES", "DECISIONS", "- R1: <the riskiest unknown>"):
+            self.assertIn(want, body("architect"))
+        self.assertIn("Paths and commands are relative to the project folder (no `mini-projects/<slug>/` prefix, no `cd`)",
+                      body("planner"))
+        self.assertIn("mini-projects/demo/CRITIQUE.md", items[2])
+        self.assertIn("ADD ONE ROUND", body("critic"))
         self.assertIn("CRITIQUE ANSWERS", items[3])
+        self.assertIn("ANSWER job", items[3])
+        self.assertIn("the current milestone", items[3])  # no milestone is set at ARCHITECT; M<k> when it is
         text = self.go()
         self.assertIn("AGENT: architect, planner, critic, architect, planner", text)
         self.assertIn("\n  2. @planner ", text)  # the numbered list sits under INSTRUCTION, indented
@@ -3097,7 +3069,8 @@ class ChainTests(V4Fixture, Base):
         for want in ("run the item's check command in your NEXT message, after the worker's reply is back: never in "
                      "the same message as the worker call", "skip to the last item.", "after a chain, end with the final status output's stage line and "
                      "`next:` line verbatim instead.", "the contract's steps replace the RULES list below, except "
-                     "\"Never skip a gate to move faster\": that rule and IF A GATE REFUSES always stay on."):
+                     "\"Never skip a gate to move faster\": that rule and the gate-refusal rule in AGENTS.md always stay on.",
+                     "Relay only THIS turn's contract"):
             self.assertIn(want, prompt)  # 2a(ii), R42: a contract never switches a gate rule off
 
     # Every $ARGUMENTS in a shell block, with the exact command around it: opencode pastes the typed text raw, so it
@@ -3150,19 +3123,13 @@ class ChainTests(V4Fixture, Base):
                 rest = self.strip_forms(block, used)
                 self.assertNotIn("$ARGUMENTS", rest, f"{name}: a $ARGUMENTS outside the known forms: {block}")
         self.assertEqual(used, set(self.ARGUMENT_FORMS))  # no stale entry
-        # R42: /brainstorm <slug> brief changes the stage, so the dashboard is rebuilt after next.py
-        self.assertIn("HARNESS_TEXT_END\npython3 scripts/status.py --html >/dev/null 2>&1; true`", bodies["brainstorm"])
-        self.assertIn('!`python3 scripts/next.py --critique "$ARGUMENTS" && ', bodies["critique"])
+        self.assertIn('!`python3 scripts/next.py --critique "$ARGUMENTS"; true`', bodies["critique"])
         go = " ".join(bodies["go"].split())
         self.assertNotIn("ONE reply", go)  # parallel building is cut (piece 3, P1): one delegation per turn
-        self.assertIn("Relay only this turn's contract", go)
         self.assertNotIn("one worker call per item", go)
-        for name in ("go", "critique"):  # R22: a chain ends with the final status output's lines (2b)
+        for name in ("go", "critique"):  # A7: the chain procedure lives in the contract (next.py) and orchestrator.md
             text = " ".join(bodies[name].split())
-            self.assertIn("after a chain, with the final status output's stage line and next: line instead", text)
-            # the contract's one send-back (PREAMBLE, orchestrator rule c, H4, H23) comes before any stop
-            self.assertIn("stop at the first check that is still not exactly OK after one send-back, then run only "
-                          "the last item", text)
+            self.assertIn("Do exactly the INSTRUCTION; end with STATUS and NEXT COMMAND.", text)
             self.assertNotIn("keep, shrink, or kill", text)  # H26
 
     def test_go_locks_brief_and_continues(self):
@@ -3268,12 +3235,23 @@ class ChainTests(V4Fixture, Base):
         self.assertEqual((rv["reason"], rv["step"], rv["round"]), ("spike", 1, 1))
         self.assertEqual(rv["arch_sha256"], sha(self.read("ARCHITECTURE.md")))
         self.assertEqual(rv["plan_sha256"], sha(self.read("PLAN.md")))
-        self.assertIn("fail line 10", text)  # the failed step's last_failure, first 10 lines
-        self.assertNotIn("fail line 11", text)
+        self.assertIn("fail line 12", text)  # the failed step's last_failure: first line + the last 9
+        self.assertNotIn("fail line 2 |", text)
         self.assertIn("new decision D<n>", text)
         self.go()
         self.assertEqual(self.state()["revise"], rv)  # recorded once
         self.assertEqual(self.state()["stage_attempts"], {"REARCHITECT": 2})
+
+    def test_revise_text_shows_the_failure_tail(self):
+        self.failing_spike()
+        st = hs.load(self.proj)
+        st["steps"][0]["last_failure"] = "\n".join(f"line {i}" for i in range(41))
+        hs.save(self.proj, st)
+        text = self.go()
+        self.assertEqual(self.fields(text)["PHASE"], "REARCHITECT")
+        self.assertIn("line 40", text)
+        self.assertIn("line 32", text)
+        self.assertNotIn("line 31", text)
 
     def test_rearchitect_brief_instruction(self):
         self.approved_v4()
@@ -3695,7 +3673,6 @@ class ChainTests(V4Fixture, Base):
         self.assertIn("APPROVAL DIGEST — demo — M1", out)
         self.assertIn("Rejected serious points — you decide", out)
         self.assertIn("next: /approve demo  or  /critique demo", out)
-        self.assertIn(".DONE", stm.CSS)
         self.assertNotIn("APPROVAL DIGEST", stm.text(self.shop))  # the list stays one line per project
         self.assertEqual(self.state_bytes(), before)  # /status writes nothing
 
@@ -3746,7 +3723,7 @@ class BuildStageTests(V4Fixture, Base):
     def edit(self, fn):
         st = hs.load(self.proj)
         fn(st)
-        hs.save(self.proj, st)
+        self.write(".harness/state.json", json.dumps(st))  # like the plugin's write: hs.save keeps the on-disk cost
 
     def stage(self, name, **kw):
         r = hs.stage(self.proj)
@@ -3856,22 +3833,21 @@ class BuildStageTests(V4Fixture, Base):
         def fn(st):
             st["steps"] = [st["steps"][0]] + [
                 {"n": n, "title": f"s{n}", "files": [f"src/s{n}.js"], "check": "true", "covers": [], "proves": None,
-                 "after": None if n == 2 else [], "done_at": None, "attempts": 0, "milestone": "M1"} for n in (2, 3, 4)]
-        self.edit(fn)  # steps 2-4: disjoint files, steps 3 and 4 say `after: none`
+                 "done_at": None, "attempts": 0, "milestone": "M1"} for n in (2, 3, 4)]
+        self.edit(fn)  # steps 2-4: disjoint files
         r = self.stage("BUILD")
         self.assertEqual(r["batch"], [{"kind": "step", "n": 2}])
         self.assertEqual(r["step"]["n"], 2)
         steps = hs.load(self.proj)["steps"]
-        self.assertEqual(hs.next_step(steps, set())["n"], 2)
-        self.assertEqual(hs.next_step(steps, {2})["n"], 3)  # a step held by an open request is skipped
-        self.assertIsNone(hs.next_step([{"n": 1, "done_at": "t"}], set()))
+        self.assertEqual(hs.next_step(steps)["n"], 2)
+        self.assertIsNone(hs.next_step([{"n": 1, "done_at": "t"}]))
 
     def test_request_turn_before_step(self):
         self.build(done=[1])
         def fn(st):
             st["steps"] = [st["steps"][0]] + [
                 {"n": n, "title": f"s{n}", "files": [f"src/s{n}.js"], "check": "true", "covers": [], "proves": None,
-                 "after": [], "done_at": None, "attempts": 0, "milestone": "M1"} for n in (2, 3)]
+                 "done_at": None, "attempts": 0, "milestone": "M1"} for n in (2, 3)]
         self.edit(fn)
         self.write("requests/step2.md", "RESEARCH: which lib?\n")
         r = self.stage("BUILD")
@@ -3915,20 +3891,20 @@ class BuildStageTests(V4Fixture, Base):
         hs.save(self.proj, st)
         self.edit(lambda st: st.update(qa={"verdict": "PASS", "milestone": "M1"}, verify={
             "tree_sha256": hs.tree_sha256(self.proj), "checks": {"1": 0, "2": 0}, "milestone": "M1"}))
-        self.assertEqual(hs.verify_fresh(self.proj, hs.load(self.proj)), (True, "verify is fresh"))
+        self.assertEqual(verify_fresh(self.proj, hs.load(self.proj)), (True, "verify is fresh"))
         self.stage("REVIEW")
         self.build(done=[1, 2])  # a milestone with a MUST feature still needs its acceptance run
         self.verified()
         self.edit(lambda st: st["verify"].pop("acceptance"))
-        self.assertEqual(hs.verify_fresh(self.proj, hs.load(self.proj)), (False, "the acceptance run was not recorded"))
+        self.assertEqual(verify_fresh(self.proj, hs.load(self.proj)), (False, "the acceptance run was not recorded"))
 
     def test_verify_fresh_reasons(self):
         self.build(done=[1, 2])
-        ok, why = hs.verify_fresh(self.proj, hs.load(self.proj))
+        ok, why = verify_fresh(self.proj, hs.load(self.proj))
         self.assertFalse(ok)
         self.assertIn("verify", why)
         self.verified()
-        self.assertEqual(hs.verify_fresh(self.proj, hs.load(self.proj))[0], True)
+        self.assertEqual(verify_fresh(self.proj, hs.load(self.proj))[0], True)
         for mutate, word in (
                 (lambda s: s["verify"]["checks"].update({"2": 3}), "step 2"),
                 (lambda s: s["verify"]["checks"].pop("1"), "step 1"),
@@ -3937,12 +3913,12 @@ class BuildStageTests(V4Fixture, Base):
                 (lambda s: s["qa"].update(verdict=None), "QA")):
             self.verified()
             self.edit(mutate)
-            ok, why = hs.verify_fresh(self.proj, hs.load(self.proj))
+            ok, why = verify_fresh(self.proj, hs.load(self.proj))
             self.assertFalse(ok)
             self.assertIn(word, why)
         self.verified()
         self.write("src/new.js", "x\n")  # a tree change
-        ok, why = hs.verify_fresh(self.proj, hs.load(self.proj))
+        ok, why = verify_fresh(self.proj, hs.load(self.proj))
         self.assertFalse(ok)
         self.assertIn("tree", why)
 
@@ -3965,11 +3941,11 @@ class BuildStageTests(V4Fixture, Base):
             visual={"verdict": "MATCH", "tree_sha256": tree, "milestone": "M1"}))
         self.stage("TESTS", milestone="M2", reason="no recorded failing run of the acceptance tests: qa runs them once")
         self.edit(lambda st: [s.update(done_at="t") for s in st["steps"]])
-        self.assertEqual(hs.verify_fresh(self.proj, hs.load(self.proj)),
+        self.assertEqual(verify_fresh(self.proj, hs.load(self.proj)),
                          (False, "verify has not run for the current tree"))
         # the same records, now of M2: the tests stand, and verify covers M2
         self.edit(lambda st: [st[k].update(milestone="M2") for k in ("qa", "verify", "visual")])
-        self.assertEqual(hs.verify_fresh(self.proj, hs.load(self.proj)), (True, "verify is fresh"))
+        self.assertEqual(verify_fresh(self.proj, hs.load(self.proj)), (True, "verify is fresh"))
         self.stage("REVIEW", milestone="M2")
 
     def test_tests_changed_after_build_is_stuck(self):
@@ -3984,6 +3960,9 @@ class BuildStageTests(V4Fixture, Base):
         self.build(done=[1, 2])
         self.write("QA.md", self.QA_OK.replace("`node --test tests/acceptance`", "`true`"))
         self.stage("STUCK", reason=hs.TESTS_CHANGED)
+        # the reason offers /go retry, so NEXT COMMAND says it too (not "fix by hand")
+        import next as nx
+        self.assertEqual(nx.next_command("demo", "STUCK", None, hs.TESTS_CHANGED), "/go retry")
         self.build(done=[1])
         self.write("tests/acceptance/add.test.js", "changed while building\n")
         self.stage("TESTS", reason="the acceptance tests changed since the recorded run: qa runs them once")
@@ -3997,16 +3976,16 @@ class BuildStageTests(V4Fixture, Base):
             self.write(f"design/mockups/{name}.html", "<h1>x</h1>\n")
         self.build(done=[1, 2], brief=ui, arch=arch)
         self.verified()
-        ok, why = hs.verify_fresh(self.proj, hs.load(self.proj))
+        ok, why = verify_fresh(self.proj, hs.load(self.proj))
         self.assertFalse(ok)
         self.assertIn("VISUAL", why)
         tree = hs.tree_sha256(self.proj)
         self.edit(lambda s: s.update(visual={"verdict": "MATCH", "tree_sha256": "old", "milestone": "M1"}))
-        self.assertFalse(hs.verify_fresh(self.proj, hs.load(self.proj))[0])
+        self.assertFalse(verify_fresh(self.proj, hs.load(self.proj))[0])
         self.edit(lambda s: s.update(visual={"verdict": "MATCH", "tree_sha256": tree, "milestone": "M1"}))
-        self.assertTrue(hs.verify_fresh(self.proj, hs.load(self.proj))[0])
+        self.assertTrue(verify_fresh(self.proj, hs.load(self.proj))[0])
         self.edit(lambda s: s.update(visual={"verdict": "FIX", "tree_sha256": tree, "milestone": "M1"}))
-        self.assertFalse(hs.verify_fresh(self.proj, hs.load(self.proj))[0])
+        self.assertFalse(verify_fresh(self.proj, hs.load(self.proj))[0])
         self.stage("FIX")  # a FIX verdict is a verify failure
 
     def test_fix_rounds_shared(self):
@@ -4040,17 +4019,17 @@ class BuildStageTests(V4Fixture, Base):
         self.build(done=[1, 2], qa=False)
         self.write("REVIEW.md", self.REVIEW)
         self.edit(lambda st: st.update(review={"tree_sha256": hs.tree_sha256(self.proj), "verdict": "SHIP", "at": "t"}))
-        ok, msg = hs.ship(self.proj, "t9")  # all done, fresh SHIP review, no QA.md
+        ok, msg = ship(self.proj, "t9")  # all done, fresh SHIP review, no QA.md
         self.assertFalse(ok)
         self.assertIn("NOT RECORDED: stage is TESTS", msg)
         self.build(done=[1, 2])
         self.write("REVIEW.md", self.REVIEW)
         self.edit(lambda st: st.update(review={"tree_sha256": hs.tree_sha256(self.proj), "verdict": "SHIP", "at": "t"}))
-        ok, msg = hs.ship(self.proj, "t9")  # tests ran, but no passing verify
+        ok, msg = ship(self.proj, "t9")  # tests ran, but no passing verify
         self.assertFalse(ok)
         self.assertIn("stage is VERIFY", msg)
         self.verified()
-        self.assertTrue(hs.ship(self.proj, "t9")[0])
+        self.assertTrue(ship(self.proj, "t9")[0])
 
     def test_tests_sha256(self):
         self.write("tests/acceptance/a.js", "1\n")
@@ -4135,7 +4114,7 @@ class AutopilotTests(V4Fixture, Base):
         def fn(st):
             st["steps"] = [st["steps"][0]] + [
                 {"n": n, "title": f"s{n}", "files": [f"src/s{n}.js"], "check": f"node s{n}.js", "covers": [],
-                 "proves": None, "after": [], "done_at": None, "attempts": 0, "milestone": "M1"} for n in (2, 3, 4)]
+                 "proves": None, "done_at": None, "attempts": 0, "milestone": "M1"} for n in (2, 3, 4)]
         self.edit(fn)
         self.write("requests/step4.md", "RESEARCH: which lib?\n")
 
@@ -4164,19 +4143,21 @@ class AutopilotTests(V4Fixture, Base):
         self.assertEqual(self.items(text), [])
         self.assertIn('"demo: step 2"', f["INSTRUCTION"])
         self.assertIn("src/s2.js", f["INSTRUCTION"])
+        self.assertIn("mini-projects/demo/requests/step2.md", f["INSTRUCTION"])  # the per-turn request path
         self.assertIn("node s2.js", f["INSTRUCTION"])
         self.assertNotIn("unless the step cannot work without more", f["INSTRUCTION"])
-        self.assertIn("requests/step2.md", f["INSTRUCTION"])
-        self.assertIn("RESEARCH:", f["INSTRUCTION"])
-        self.assertIn("TEST-WRONG:", f["INSTRUCTION"])
+        # the request file format lives in the builder's body, not in the dispatch
+        with open(os.path.join(WORKSHOP, ".opencode", "agents", "builder.md"), encoding="utf-8") as fh:
+            body = fh.read()
+        self.assertIn("write requests/step<n>.md (first line 'RESEARCH: <question>' or 'TEST-WRONG: <test file>", body)
         # a test-wrong request becomes a qa testfix item
         self.write("requests/step4.md", "TEST-WRONG: tests/acceptance/add.test.js — wrong flag\n")
         text = self.go()
         self.assertEqual(self.fields(text)["AGENT"], "qa")  # a testfix is a turn of its own
         qa = self.fields(text)["INSTRUCTION"]
         self.assertIn('"demo: testfix step 4"', qa)
-        self.assertIn("REVISIONS", qa)
-        self.assertIn("step4", qa)
+        self.assertIn("TESTFIX", qa)
+        self.assertIn("requests/step4.md", qa)
 
     def test_single_step_contract_keeps_its_fields(self):
         self.build(done=[1])
@@ -4199,9 +4180,13 @@ class AutopilotTests(V4Fixture, Base):
         self.assertIn("F1", ins)  # M1 covers F1 (MUST); F3 belongs to M2, F2 is SHOULD
         self.assertNotIn("F3", ins)
         self.assertNotIn("F2", ins)
-        for want in ("QA.md", "tests/acceptance/", "- run:", "it must fail now",
+        for want in ("QA.md", "tests/acceptance/", "- run:",
                      "verbatim (no cd, no wrapper, no echo"):  # T13: a wrapped run is never recorded
             self.assertIn(want, ins)
+        qa_body = self.qa_body()
+        self.assertIn("Nothing after it.", " ".join(qa_body.split()))  # the old dispatch said "Run nothing after it"
+        for want in ("`## RUN` (exactly one line `- run:", "It MUST fail now: the code is not built."):
+            self.assertIn(want, qa_body)  # the QA.md format and the must-fail rule live in qa.md
         self.assertTrue(ins.endswith(self.REPORT), ins)
         self.assertEqual(self.state()["autopilot"]["on"], True)
 
@@ -4212,13 +4197,17 @@ class AutopilotTests(V4Fixture, Base):
         self.assertEqual((f["PHASE"], f["AGENT"]), ("VERIFY", "qa"))
         ins = f["INSTRUCTION"]
         self.assertIn('"demo: verify"', ins)
-        for want in ("node --test test/store.test.js", "node src/cli.js add x", "VERDICT", "one per call",
-                     # T15 live: QA saw "QA.md already says PASS", wrote nothing, and VERIFY ran again (no verdict)
-                     "Write it in this run even if QA.md already says the same: the harness records the verdict "
-                     "only from this run's write."):
+        for want in ("node --test test/store.test.js", "node src/cli.js add x", "'- run:' line of QA.md"):
             self.assertIn(want, ins)
+        # T15 live: QA saw "QA.md already says PASS", wrote nothing, and VERIFY ran again (no verdict): qa.md says it
+        for want in ("Write it in every VERIFY run, even if QA.md already says the same: the harness records the "
+                     "verdict only from that write.", "`VERDICT: PASS` only if every command\nexited 0", "one per call"):
+            self.assertIn(want, self.qa_body())
         self.assertNotIn("preview.sh", ins)
         self.assertTrue(ins.endswith(self.REPORT), ins)
+        self.write("DESIGN.md", DocTests.DESIGN_OK)  # a ui plan is not approvable without a valid DESIGN.md
+        for name in ("home", "quiz"):
+            self.write(f"design/mockups/{name}.html", "<h1>x</h1>\n")
         self.build(done=[1, 2], arch=ARCH_UI, brief=BRIEF_OK.replace("- ui: no", "- ui: yes"))
         text = self.go()
         f = self.fields(text)
@@ -4226,14 +4215,18 @@ class AutopilotTests(V4Fixture, Base):
         items = self.items(text)
         self.assertIn('"demo: verify"', items[0])
         self.assertIn('"demo: visual"', items[1])
-        for want in ("bash scripts/preview.sh demo", "background", "design/shots/", "DESIGN.md", "VISUAL.md",
-                     # T15 live: MATCH then FIX on the same tree, and deferred work promoted to M1 fixes
-                     "'VERDICT: MATCH', 'VERDICT: MINOR' or 'VERDICT: FIX' on the first line",
-                     "'VERDICT: FIX' only when a screen this milestone builds breaks a DESIGN.md token or the "
-                     "accessibility floor, or visibly works wrong; 'VERDICT: MINOR' when only differences outside "
-                     "that rule remain; list them (polish, anything PLAN.md leaves to a later milestone) under "
-                     "'Later': they never make the verdict FIX."):
+        for want in ("mini-projects/demo", "VISUAL.md"):
             self.assertIn(want, items[1])
+        # the procedure and the verdict rules live in inspector.md
+        with open(os.path.join(WORKSHOP, ".opencode", "agents", "inspector.md"), encoding="utf-8") as fh:
+            body = " ".join(fh.read().split())
+        for want in ("bash scripts/preview.sh <slug>", "starts the app detached", "design/shots/", "DESIGN.md `## SCREENS`",
+                     # T15 live: MATCH then FIX on the same tree, and deferred work promoted to M1 fixes
+                     "`VERDICT: MATCH`, `VERDICT: MINOR` or `VERDICT: FIX`",
+                     "FIX only when a screen this milestone builds breaks a DESIGN.md token or the accessibility floor, "
+                     "or visibly works wrong. MINOR = only items outside that rule remain (polish, anything PLAN.md "
+                     "leaves to a later milestone): list them under `Later`"):
+            self.assertIn(want, body)
         self.assertTrue(items[1].endswith(self.REPORT), items[1])
         self.assertEqual(len(items), 3)  # the last relays the status
 
@@ -4251,7 +4244,7 @@ class AutopilotTests(V4Fixture, Base):
         tree = hs.tree_sha256(self.proj)
         for verdict, fresh in (("MATCH", True), ("MINOR", True), ("FIX", False)):
             self.edit(lambda s: s.update(visual={"verdict": verdict, "tree_sha256": tree, "milestone": "M1"}))
-            self.assertEqual(hs.verify_fresh(self.proj, hs.load(self.proj))[0], fresh, verdict)
+            self.assertEqual(verify_fresh(self.proj, hs.load(self.proj))[0], fresh, verdict)
         self.assertEqual(hd.parse_visual("# V\nVERDICT: MINOR\n- Later: x"), "MINOR")
         self.assertEqual(hs.VISUAL_RUN_CAP, 2)
 
@@ -4280,11 +4273,22 @@ class AutopilotTests(V4Fixture, Base):
         self.assertEqual(nm.CHAINS["DESIGN"][0], "designer")
         self.assertNotIn("inspector", [a for c in nm.CHAINS.values() for a in c])
 
+    def test_design_write_text_keeps_a_passing_design(self):
+        """A10: a re-run of the DESIGN chain keeps DESIGN.md and its mockups unless ARCHITECTURE.md made them untrue."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("next_design", os.path.join(WORKSHOP, "scripts", "next.py"))
+        nm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(nm)
+        text = nm._write_text("designer", "demo", [], "")
+        self.assertIn("If DESIGN.md and its mockups exist and pass their check, keep them; change only what the new "
+                      "ARCHITECTURE.md makes untrue, and re-state STACK FIT.", text)
+        self.assertIn("write mini-projects/demo/DESIGN.md: '## SUMMARY'", text)  # a first design is still written in full
+
     def test_visual_cap_skips_inspector(self):
         self.ui_project(visual_runs={"M1": 2})
         tree = hs.tree_sha256(self.proj)
         self.edit(lambda s: s.update(visual={"verdict": "FIX", "tree_sha256": "old-tree", "milestone": "M1"}))
-        self.assertTrue(hs.verify_fresh(self.proj, hs.load(self.proj))[0])  # capped: the visual part is satisfied
+        self.assertTrue(verify_fresh(self.proj, hs.load(self.proj))[0])  # capped: the visual part is satisfied
         # a new tree after a fix: verify is stale, VERIFY issues qa only
         self.edit(lambda s: s["verify"].update(tree_sha256="stale"))
         text = self.go()
@@ -4293,10 +4297,10 @@ class AutopilotTests(V4Fixture, Base):
         self.assertNotIn("inspector", f["AGENT"])
         self.assertEqual(self.state()["visual_runs"], {"M1": 2})  # not counted past the cap
         self.verified()  # QA passes on the new tree
-        self.assertTrue(hs.verify_fresh(self.proj, hs.load(self.proj))[0])
+        self.assertTrue(verify_fresh(self.proj, hs.load(self.proj))[0])
         # one run short of the cap still fails on a FIX verdict for the current tree
         self.edit(lambda s: s.update(visual_runs={"M1": 1}, visual={"verdict": "FIX", "tree_sha256": hs.tree_sha256(self.proj), "milestone": "M1"}))
-        self.assertFalse(hs.verify_fresh(self.proj, hs.load(self.proj))[0])
+        self.assertFalse(verify_fresh(self.proj, hs.load(self.proj))[0])
         self.assertEqual(tree, hs.tree_sha256(self.proj))
 
     CAP_REASON = ("VISUAL: the visual check ran 2 times without a recorded verdict. Read VISUAL.md, fix what blocked it, "
@@ -4304,7 +4308,7 @@ class AutopilotTests(V4Fixture, Base):
 
     def test_visual_cap_without_verdict_is_stuck(self):
         self.ui_project(visual_runs={"M1": 2})  # QA passed, verify fresh, two inspector runs, no verdict recorded
-        self.assertFalse(hs.verify_fresh(self.proj, hs.load(self.proj))[0])  # no silent pass at the cap
+        self.assertFalse(verify_fresh(self.proj, hs.load(self.proj))[0])  # no silent pass at the cap
         r = hs.stage(self.proj)
         self.assertEqual((r["stage"], r["reason"]), ("STUCK", self.CAP_REASON))
         # a verdict recorded for another milestone does not count
@@ -4312,7 +4316,7 @@ class AutopilotTests(V4Fixture, Base):
         self.assertEqual(hs.stage(self.proj)["stage"], "STUCK")
         # a verdict for this milestone (any tree, even FIX) satisfies the visual part at the cap
         self.edit(lambda s: s.update(visual={"verdict": "FIX", "tree_sha256": "old-tree", "milestone": "M1"}))
-        self.assertTrue(hs.verify_fresh(self.proj, hs.load(self.proj))[0])
+        self.assertTrue(verify_fresh(self.proj, hs.load(self.proj))[0])
         self.assertEqual(hs.stage(self.proj)["stage"], "REVIEW")
         # one run short of the cap: no verdict is just VERIFY pending, not STUCK
         self.edit(lambda s: (s.pop("visual"), s.update(visual_runs={"M1": 1})))
@@ -4473,16 +4477,26 @@ class AutopilotTests(V4Fixture, Base):
         self.nx._after_turn(self.proj, "demo", False)
         self.assertNotIn("REVIEW", self.state().get("stage_attempts", {}))
 
-    def test_review_contract_plan_notes_rule(self):
+    def test_review_contract_and_reviewer_rules(self):
         self.build(done=[1, 2])
         self.verified()
         f = self.fields(self.go())
         self.assertEqual((f["PHASE"], f["AGENT"]), ("REVIEW", "reviewer"))
         ins = f["INSTRUCTION"]
         self.assertIn('"demo: review"', ins)
-        for want in ("REVIEW.md", "Blind spots", "README.md", "tests/acceptance/", "## Plan notes", "never FIX FIRST",
-                     "## Hunt", "- edge cases:", "PROVEN", "## Leads", "python3 .review/<file>"):
+        for want in ("mini-projects/demo/REVIEW.md per your instructions", "change no code", "workdir mini-projects/demo"):
             self.assertIn(want, ins)
+        # A9: true here, because REVIEW is only routed after QA's verify recorded every check on this tree
+        self.assertIn("QA's verify on this exact tree recorded every step check and the acceptance run as exit 0; "
+                      "do not re-run them. Run only a PLAN.md ACCEPTANCE or sign-off command that is not a step check.", ins)
+        self.assertLess(len(ins), 700)  # the reviewer's own prompt holds the rules; the dispatch stays short
+        with open(os.path.join(WORKSHOP, ".opencode", "agents", "reviewer.md"), encoding="utf-8") as fh:
+            body = fh.read()
+        # the Plan-notes rule lives only in the reviewer's prompt
+        self.assertIn("put it under `## Plan notes` (never FIX FIRST)", body)
+        # /review has no verify gate: the prompt's rule is conditional on the instruction
+        self.assertIn("When your instruction says QA's verify recorded the checks, do not re-run them; otherwise run "
+                      "every `done when:` check you may run", body)
         self.assertTrue(ins.endswith(self.REPORT), ins)
 
     def test_fix_contract_counts_the_round(self):
@@ -4605,9 +4619,11 @@ class AutopilotTests(V4Fixture, Base):
 
     def test_testfix_always_logs_a_revision(self):
         text = self.nx._testfix_text("demo", 4)
-        self.assertIn("- step4: <test file> \u2014 <what changed, why>", text)
-        self.assertIn("- step4: <test file> \u2014 unchanged: <why the test is right>", text)
-        self.assertNotIn("leave it and say why", text)
+        self.assertIn("mini-projects/demo/requests/step4.md", text)
+        body = self.qa_body()  # the REVISIONS line formats live in qa.md
+        self.assertIn("ALWAYS add exactly one\nline under `## REVISIONS`: `- step<n>: <test file> \u2014 <what changed, why>`", body)
+        self.assertIn("`- step<n>: <test file> \u2014 unchanged: <why\nthe test is right>`", body)
+        self.assertNotIn("leave it and say why", text + body)
         self.build(done=[1])
         self.write("requests/step2.md", "TEST-WRONG: tests/acceptance/add.test.js \u2014 wrong\n")
         self.assertEqual(hs.requests(self.proj, self.state())[0]["kind"], "TEST-WRONG")
@@ -4781,7 +4797,7 @@ class ScopeCheckTests(V4Fixture, Base):
         def fn(st):
             st["steps"] = [st["steps"][0]] + [
                 {"n": n, "title": f"s{n}", "files": [f], "check": f"node s{n}.js", "covers": [], "proves": None,
-                 "after": [], "done_at": None, "attempts": 0, "last_failure": None, "milestone": "M1"}
+                 "done_at": None, "attempts": 0, "last_failure": None, "milestone": "M1"}
                 for n, f in zip((2, 3), files)]
         self.edit(fn)
 
@@ -4997,7 +5013,7 @@ class ScopeCheckTests(V4Fixture, Base):
         def fn(st):
             st["steps"] = [st["steps"][0]] + [
                 {"n": n, "title": f"s{n}", "files": [f"src/s{n}.js"], "check": f"node s{n}.js", "covers": [],
-                 "proves": None, "after": [], "done_at": None, "attempts": 0, "last_failure": None,
+                 "proves": None, "done_at": None, "attempts": 0, "last_failure": None,
                  "milestone": "M1"} for n in (2, 3, 4)]
         self.edit(fn)
         self.write("requests/step2.md", "TEST-WRONG: tests/acceptance/add.test.js — wrong\n")
@@ -5040,6 +5056,46 @@ class ScopeCheckTests(V4Fixture, Base):
         new = self.state()["qa"]["tests_sha256"]
         self.assertNotEqual(new, old)
         self.assertEqual(new, hs.tests_sha256(self.proj))
+
+    def test_retry_after_interrupted_testfix_pins_the_tests(self):
+        # the turn was cut off before the next /go judged it: /go retry accepts the revised tests as the baseline,
+        # or qa would be asked to re-run them forever (the plugin pins only a FAILING run)
+        self.build(done=[1])
+        self.write("requests/step2.md", "TEST-WRONG: tests/acceptance/add.test.js — wrong\n")
+        self.assertEqual(self.fields(self.go())["AGENT"], "qa")
+        self.write("tests/acceptance/add.test.js", "revised\n")
+        os.remove(os.path.join(self.proj, "requests", "step2.md"))
+        self.go("demo retry")
+        self.assertEqual(self.state()["qa"]["tests_sha256"], hs.tests_sha256(self.proj))
+        self.assertNotEqual(self.fields(self.go())["PHASE"], "TESTS")
+
+    def test_retry_after_a_testfix_scope_failure_pins_the_tests(self):
+        # the same loop through the scope-failure path: qa revised the tests, then touched code; /go retry accepts
+        # the files, and must pin the revised tests or qa is asked again (the plugin pins only a FAILING run)
+        self.build(done=[1])
+        self.write("requests/step2.md", "TEST-WRONG: tests/acceptance/add.test.js — wrong\n")
+        self.assertEqual(self.fields(self.go())["AGENT"], "qa")
+        self.write("tests/acceptance/add.test.js", "revised\n")
+        os.remove(os.path.join(self.proj, "requests", "step2.md"))
+        self.write("src/store.js", "sneaky\n")
+        self.assertEqual(self.fields(self.go())["AGENT"], "none")  # the scope failure stops
+        self.go("demo retry")
+        self.assertEqual(self.state()["qa"]["tests_sha256"], hs.tests_sha256(self.proj))
+        self.assertNotEqual(self.fields(self.go())["PHASE"], "TESTS")
+
+    def test_plain_go_after_a_testfix_scope_failure_pins_the_tests(self):
+        # the stop message says "otherwise remove it, then /go": that plain /go drops the record, so it pins too
+        self.build(done=[1])
+        self.write("requests/step2.md", "TEST-WRONG: tests/acceptance/add.test.js — wrong\n")
+        self.assertEqual(self.fields(self.go())["AGENT"], "qa")
+        self.write("tests/acceptance/add.test.js", "revised\n")
+        os.remove(os.path.join(self.proj, "requests", "step2.md"))
+        self.write("src/store.js", "sneaky\n")
+        self.assertEqual(self.fields(self.go())["AGENT"], "none")  # the scope failure stops
+        os.remove(os.path.join(self.proj, "src", "store.js"))
+        self.go()
+        self.assertEqual(self.state()["qa"]["tests_sha256"], hs.tests_sha256(self.proj))
+        self.assertNotEqual(self.fields(self.go())["PHASE"], "TESTS")
 
     def test_testfix_turn_touching_code_fails(self):
         self.build(done=[1])
@@ -5211,6 +5267,9 @@ class CurrentProjectTests(V4Fixture, Base):
         self.build(done=[1])
         self.nx.contract(self.shop, "demo")
         self.assertIsNone(self.state().get("port"))
+        self.write("DESIGN.md", DocTests.DESIGN_OK)  # a ui plan is not approvable without a valid DESIGN.md
+        for name in ("home", "quiz"):
+            self.write(f"design/mockups/{name}.html", "<h1>x</h1>\n")
         self.build(done=[1], arch=ARCH_UI, brief=BRIEF_OK.replace("- ui: no", "- ui: yes"))
         self.nx.contract(self.shop, "demo")
         self.assertEqual(self.state()["port"], hs.PORT_BASE)
@@ -5533,7 +5592,7 @@ class CommandsTaskTests(V4Fixture, Base):
             return str(cm.exception)
 
         def ship_msg():
-            ok, msg = hs.ship(self.proj, "t9")
+            ok, msg = ship(self.proj, "t9")
             self.assertFalse(ok)
             return msg
 
@@ -5586,7 +5645,7 @@ class CommandsTaskTests(V4Fixture, Base):
     def test_ship_on_unreadable_state_prints_the_one_message(self):
         self.v4()
         self.write(".harness/state.json", "{")
-        ok, msg = hs.ship(self.proj, "t9")
+        ok, msg = ship(self.proj, "t9")
         self.assertEqual((ok, msg), (False, "NOT RECORDED: " + hs.unreadable_reason(self.proj)))
         self.assertNotIn("Expecting", msg)
 
@@ -5613,7 +5672,7 @@ class CommandsTaskTests(V4Fixture, Base):
         self.ready_to_ship()
         self.write(".harness/snapshot.json", "{}")
         hs.save(self.proj, dict(hs.load(self.proj), scope_failure={"paths": ["a"], "steps": {}, "stage": None}))
-        self.assertTrue(hs.ship(self.proj, "t9")[0])
+        self.assertTrue(ship(self.proj, "t9")[0])
         self.assertNotIn("scope_failure", self.state())
         self.assertFalse(os.path.exists(snap))
 
@@ -5621,7 +5680,7 @@ class CommandsTaskTests(V4Fixture, Base):
         self.ready_to_ship()
         for rel in ("requests/step1.md", "requests/step2.md", "RESEARCH/step2.md", "RESEARCH/notes.md", "requests/other.txt"):
             self.write(rel, rel + "\n")
-        ok, msg = hs.ship(self.proj, "t9")
+        ok, msg = ship(self.proj, "t9")
         self.assertTrue(ok, msg)
         arc = os.path.join(self.proj, ".harness", "archive", "m1")
         self.assertEqual(sorted(os.listdir(os.path.join(arc, "requests"))), ["step1.md", "step2.md"])
@@ -5635,7 +5694,7 @@ class CommandsTaskTests(V4Fixture, Base):
         self.fresh_proj_keep_shop()
         self.ready_to_ship(review=False)
         self.write("requests/step1.md", "x\n")
-        self.assertFalse(hs.ship(self.proj, "t9")[0])
+        self.assertFalse(ship(self.proj, "t9")[0])
         self.assertTrue(os.path.exists(os.path.join(self.proj, "requests", "step1.md")))
 
     # --- preview.sh ---
@@ -6024,7 +6083,7 @@ class CheckpointTests(Base):
         # before the first ship shelved the project's .gitignore, AGENTS.md and README.md with the stray edit
         self.repo(gitignore="__pycache__/\n.harness/\n")
         scaffold = {"AGENTS.md": "rules\n", "README.md": "# demo\n", "NOTES.md": "n\n", "LEARNINGS.md": "l\n",
-                    "opencode.json": "{}\n", "RESEARCH/.gitkeep": ""}
+                    "RESEARCH/.gitkeep": ""}
         for rel, text in {**scaffold, "BRIEF.md": "b\n", "ARCHITECTURE.md": "a\n", "PLAN.md": "p\n"}.items():
             self.write(rel, text)
         self.write("stray.py", "x = 1\n")
@@ -6045,6 +6104,18 @@ class CheckpointTests(Base):
         r = cp.checkpoint(self.proj, {"kind": "approved", "sha12": "abcdef012345"})
         self.assertTrue(r["ok"] and r["sha"], r)
         self.assertEqual(self.g("show", "--name-only", "--format=", "HEAD").stdout.split(), ["PLAN.md"])
+
+    def test_template_gitignore_keeps_env_example_tracked(self):
+        # A23: the template's `.env.*` line also ignored `.env.example`, so no save point held it and deploys lacked it
+        with open(os.path.join(WORKSHOP, "mini-projects", "_template", ".gitignore"), encoding="utf-8") as fh:
+            self.repo(gitignore=fh.read())
+        self.state([{"n": 1, "title": "Config", "files": [".env.example", ".env.local"], "milestone": "M1"}])
+        self.write(".env.example", "API_KEY=\n")
+        self.write(".env.local", "API_KEY=real\n")
+        r = cp.checkpoint(self.proj, {"kind": "step", "n": 1})
+        self.assertTrue(r["ok"] and r["sha"], r)
+        self.assertIn(".env.example", self.committed())
+        self.assertNotIn(".env.local", self.committed())
 
     def test_message_and_trailer(self):
         self.repo()
@@ -6099,6 +6170,16 @@ class CheckpointTests(Base):
         self.write(".harness/scan-allow", "old.txt:aws-key\n")
         self.assertEqual(cp.scan_range(self.proj, None)[0], [])
         self.assertEqual(cp.scan_ref(self.proj, "HEAD~1")[0], [])
+
+    def test_scan_ref_numbers_lines_like_a_save_point(self):
+        self.repo()
+        self.write_bytes("a.txt", b"one\n\x0c\n" + self.TOKENS["aws-key"].encode() + b"\n")
+        self.g("add", "a.txt")
+        staged = [(b["file"], b["line"], b["rule"]) for b in cp.scan_staged(self.proj)[0]]
+        self.g("commit", "-q", "--no-verify", "-m", "x")
+        ref = [(b["file"], b["line"], b["rule"]) for b in cp.scan_ref(self.proj, "HEAD")[0]]
+        self.assertEqual(staged, [("a.txt", 3, "aws-key")])
+        self.assertEqual(ref, staged)
 
     def write_bytes(self, rel, data):
         with open(os.path.join(self.proj, rel), "wb") as fh:
@@ -6334,6 +6415,22 @@ class CheckpointTests(Base):
         self.assertTrue(cp.checkpoint(self.proj, {"kind": "ship", "milestone": "M1"})["ok"])
         self.assertIn("stray.txt", self.committed())
 
+    def test_block_names_every_rule(self):
+        line = 'AWS_SECRET_ACCESS_KEY = "' + "AKIA" + 'IOSFODNN7EXAMPLE"\n'
+        self.repo()
+        self.write("k.py", line)
+        r = cp.checkpoint(self.proj, {"kind": "ship", "milestone": "M1"})
+        self.assertFalse(r["ok"])
+        for want in ("k.py:1 aws-key", "k.py:1 assigned-secret", "k.py:aws-key, k.py:assigned-secret"):
+            self.assertIn(want, r["message"])
+        self.assertEqual(r["block"]["rule"], "aws-key")  # the first block still leads
+        many = [{"file": f"f{i}.py", "line": 1, "rule": "aws-key"} for i in range(12)]
+        t = cp.block_text(many)
+        self.assertIn("f9.py:1 aws-key", t)
+        self.assertNotIn("f10.py:1", t)
+        self.assertIn("and 2 more", t)
+        self.assertIn("f11.py:aws-key", t)  # the allow lines cover every block, not only the shown rows
+
     def test_block_message_wording(self):
         self.repo()
         self.write(".env", "A=1\n")
@@ -6390,8 +6487,8 @@ class CommitOnGreenTests(V4Fixture, Base):
     fields = NextTests.fields
     restore_env = CheckpointTests.restore_env
     TOKENS = CheckpointTests.TOKENS
-    STOP = ("save point blocked: %s. Fix the file or add '%s' to mini-projects/demo/.harness/scan-allow, "
-            "then /go demo")
+    STOP = ("save point blocked: %s. Allow lines for .harness/scan-allow: %s. Fix the file or allow it "
+            "(in mini-projects/demo), then /go demo")
 
     def setUp(self):
         super().setUp()
@@ -6600,10 +6697,28 @@ class CommitOnGreenTests(V4Fixture, Base):
         self.write(".harness/state.json", json.dumps(st))
         hs.load(self.proj)  # the shape check accepts every new key
         for bad in ({"checkpoint": {"sha": 1}}, {"checkpoint_block": {"event": "x"}}, {"scan_notes": [1]},
-                    {"checkpoint_block": {"event": {}, "file": None, "line": "1", "rule": "r", "message": "m"}}):
+                    {"checkpoint_block": {"event": {}, "file": None, "line": "1", "rule": "r", "message": "m"}},
+                    {"checkpoint_block": {"event": {}, "file": "a", "line": 1, "rule": "r", "message": "m",
+                                          "blocks": "x"}},
+                    {"checkpoint_block": {"event": {}, "file": "a", "line": 1, "rule": "r", "message": "m",
+                                          "blocks": [{"file": "a", "line": "1", "rule": "r"}]}}):
             self.write(".harness/state.json", json.dumps(bad))
             with self.assertRaises(hs.StateError, msg=bad):
                 hs.load(self.proj)
+
+    def test_block_reason_lists_every_rule(self):
+        blk = {"event": {"kind": "step", "n": 1}, "file": "k.py", "line": 1, "rule": "aws-key", "message": "m",
+               "blocks": [{"file": "k.py", "line": 1, "rule": "aws-key"},
+                          {"file": "k.py", "line": 1, "rule": "assigned-secret"}]}
+        text = hs.block_reason(blk, "demo")
+        for want in ("k.py:1 aws-key", "k.py:1 assigned-secret", "k.py:aws-key, k.py:assigned-secret", "/go demo"):
+            self.assertIn(want, text)
+        self.write(".harness/state.json", json.dumps({"checkpoint_block": blk}))
+        hs.load(self.proj)  # the shape check accepts the list
+        old = {k: v for k, v in blk.items() if k != "blocks"}  # a state file from before: the one-rule text
+        self.assertEqual(hs.block_reason(old, "demo"),
+                         "k.py:1 aws-key. Fix the file or add 'k.py:aws-key' to mini-projects/demo/.harness/scan-allow, "
+                         "then /go demo")
 
     def test_testfix_commit(self):
         self.build(done=[1])
@@ -6747,7 +6862,9 @@ class CommitOnGreenTests(V4Fixture, Base):
         self.edit(lambda st: st.update(scan_notes=["README.md:3:email"], checkpoint_block={
             "event": {"kind": "step", "n": 2}, "file": "src/.env", "line": 0, "rule": "env-file", "message": "m"}))
         out = stp.text(self.shop, "demo")
-        self.assertIn(self.STOP % ("src/.env env-file", "src/.env:env-file"), out)
+        # a hand-made stored block has no list: the one-rule text (an older state file)
+        self.assertIn("save point blocked: src/.env env-file. Fix the file or add 'src/.env:env-file' to "
+                      "mini-projects/demo/.harness/scan-allow, then /go demo", out)
         self.assertIn("scan notes: README.md:3:email", out)
 
 
@@ -7313,6 +7430,16 @@ class ShipYesTests(V4Fixture, Base):
         blocks = re.findall(r"!`([^`]+)`", body)
         self.assertEqual(len(blocks), 1)
         self.assertTrue(blocks[0].startswith('python3 scripts/checkpoint.py publish "$ARGUMENTS";'), blocks[0])
+
+    def test_publish_names_every_rule(self):
+        self.bare_origin()
+        self.write("a.txt", "one\n")
+        self.write("k.py", 'AWS_SECRET_ACCESS_KEY = "' + "AKIA" + 'IOSFODNN7EXAMPLE"\n')
+        self.base()
+        res = cp.publish(self.proj, False, run=self.FakeRun())
+        self.assertFalse(res["ok"])
+        for want in ("k.py:1 aws-key", "k.py:1 assigned-secret", "k.py:assigned-secret"):
+            self.assertIn(want, res["message"])
 
     def test_publish_blocks_secret_in_history(self):
         self.bare_origin()
@@ -8010,6 +8137,13 @@ class DeployTests(V4Fixture, Base):
         self.assertIn("aws-key", res["message"])
         self.assertEqual(fake.calls, [])
         self.assertFalse(os.path.exists(self.home("releases")))
+
+    def test_deploy_scan_names_every_rule(self):
+        self.ship(files={"k.py": 'AWS_SECRET_ACCESS_KEY = "' + "AKIA" + 'IOSFODNN7EXAMPLE"\n'})
+        res, fake = self.run_deploy()
+        self.assertFalse(res["ok"])
+        for want in ("k.py:1 aws-key", "k.py:1 assigned-secret", "k.py:aws-key, k.py:assigned-secret"):
+            self.assertIn(want, res["message"])
 
     def test_plist_env(self):
         import plistlib

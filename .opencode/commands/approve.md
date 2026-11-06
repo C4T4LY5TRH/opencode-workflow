@@ -4,7 +4,7 @@ agent: orchestrator
 ---
 Approval argument: "$ARGUMENTS" (empty means the current project). The approval script already ran when the human typed this command; its output:
 
-!`bash scripts/approve.sh "$ARGUMENTS"; rc=$?; python3 scripts/status.py --html >/dev/null 2>&1; exit $rc`
+!`bash scripts/approve.sh "$ARGUMENTS"; rc=$?; exit $rc`
 
 Relay that output to the human verbatim. Run nothing else and write nothing.
 If it says APPROVED, the next command is /go (a SAVE POINT BLOCKED line names what to fix first; /go stops until then). If it says REFUSED, list each missing item on its own line, then the command it ends with.

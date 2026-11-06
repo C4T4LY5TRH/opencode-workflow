@@ -21,7 +21,9 @@ from datetime import datetime, timezone
 SCAN_BLOCK_BYTES = 50 * 1024 * 1024
 SCAN_NOTE_BYTES = 5 * 1024 * 1024
 SCAN_NOTES_KEPT = 20  # the caller keeps this many in state.scan_notes
-TEXT_SCAN_BYTES = 2 * 1024 * 1024  # whole-tree scans read blobs up to this size
+
+OWN_REPO_REFUSAL = ("this project is not its own git repository (git init inside the project first); "
+                    "refusing to touch any other repository")
 
 # Trusted git: nothing a project's own config can run (spec 4.1). Identity is the only user config we rely on.
 GIT_BASE = ["git", "-c", "core.fsmonitor=false", "-c", "safe.bareRepository=explicit", "-c", "core.hooksPath=/dev/null"]
@@ -36,7 +38,7 @@ _N = "note"
 IDENTITY_MESSAGE = ('set your git name and email: git config --global user.email "you@example.com" '
                     'and git config --global user.name "Your Name"')
 
-SCAFFOLD = (".gitignore", "AGENTS.md", "README.md", "NOTES.md", "LEARNINGS.md", "opencode.json", "RESEARCH/")
+SCAFFOLD = (".gitignore", "AGENTS.md", "README.md", "NOTES.md", "LEARNINGS.md", "RESEARCH/")
 DEP_FOLDERS = {"node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".next", "target", "Pods",
                "DerivedData"}
 
@@ -68,11 +70,12 @@ def _env():
     return env
 
 
-def git(proj, *args, check=True, input=None):
-    """Run one trusted git command in proj. Text output (undecodable bytes kept as surrogates). check=True raises
-    subprocess.CalledProcessError on a non-zero exit."""
-    return subprocess.run([*GIT_BASE, "-C", proj, *args], capture_output=True, text=True, encoding="utf-8",
-                          errors="surrogateescape", env=_env(), check=check, input=input, timeout=300)
+def git(proj, *args, check=True, input=None, binary=False):
+    """Run one trusted git command in proj. Text output (undecodable bytes kept as surrogates), or raw bytes with
+    binary=True (a tar stream). check=True raises subprocess.CalledProcessError on a non-zero exit."""
+    text = {} if binary else {"text": True, "encoding": "utf-8", "errors": "surrogateescape"}
+    return subprocess.run([*GIT_BASE, "-C", proj, *args], capture_output=True, **text, env=_env(), check=check,
+                          input=input, timeout=300)
 
 
 def own_repo(proj):
@@ -191,6 +194,17 @@ def _filter(findings, allow):
 
 def _split(findings):
     return ([f for f in findings if f["level"] == "block"], [f for f in findings if f["level"] == "note"])
+
+
+BLOCKS_KEPT = 50  # blocks stored on a stopped save point
+
+
+def block_text(blocks, cap=10):
+    """Every block as `file:line rule` (at most `cap`), then the distinct `file:rule` lines to put in .harness/scan-allow."""
+    rows = [f"{b['file']}:{b['line']} {b['rule']}" if b["line"] else f"{b['file']} {b['rule']}" for b in blocks[:cap]]
+    more = f" ... and {len(blocks) - cap} more" if len(blocks) > cap else ""
+    allows = list(dict.fromkeys(f"{b['file']}:{b['rule']}" for b in blocks))
+    return "; ".join(rows) + more + ". Allow lines for .harness/scan-allow: " + ", ".join(allows)
 
 
 def scan_text(path, text, allow=()):
@@ -315,52 +329,12 @@ def scan_staged(proj):
     return _split(_filter(_scan_diff(proj, ["diff", "--cached"], allow), allow))
 
 
-def _cat_blobs(proj, oids):
-    """{oid: bytes} through one `git cat-file --batch` process."""
-    if not oids:
-        return {}
-    p = subprocess.run([*GIT_BASE, "-C", proj, "cat-file", "--batch"], input="".join(o + "\n" for o in oids).encode(),
-                       capture_output=True, env=_env(), timeout=300)
-    data, pos, out = p.stdout, 0, {}
-    while pos < len(data):
-        nl = data.find(b"\n", pos)
-        if nl < 0:
-            break
-        head = data[pos:nl].split()
-        if len(head) != 3:
-            pos = nl + 1
-            continue
-        size = int(head[2])
-        out[head[0].decode()] = data[nl + 1:nl + 1 + size]
-        pos = nl + 1 + size + 1
-    return out
-
-
 def scan_ref(proj, ref):
-    """(blocks, notes) over a whole tree (deploy readiness): every committed file at `ref`."""
+    """(blocks, notes) over a whole tree (deploy readiness): every committed file at `ref`. The empty tree is diffed
+    against `ref`, so every file is an added file and goes through the same engine as a save point."""
     allow = read_allow(proj)
-    tree = git(proj, "ls-tree", "-r", "-l", "-z", ref).stdout
-    entries, out = [], []
-    for rec in tree.split("\0"):
-        if not rec:
-            continue
-        meta, _, path = rec.partition("\t")
-        parts = meta.split()
-        if len(parts) < 4 or parts[1] != "blob":
-            continue
-        size = int(parts[3]) if parts[3].isdigit() else None
-        out += _scan_name(path, size)
-        dep = _dep_note(path)
-        if dep:
-            out.append(dep)
-        if size is not None and size <= TEXT_SCAN_BYTES:
-            entries.append((path, parts[2]))
-    blobs = _cat_blobs(proj, sorted({o for _, o in entries}))
-    for path, oid in entries:
-        raw = blobs.get(oid, b"")
-        for n, l in enumerate(raw.decode("utf-8", "replace").splitlines(), start=1):
-            out += _scan_line(path, n, l)
-    return _split(_filter(out, allow))
+    empty = git(proj, "hash-object", "-t", "tree", "--stdin", input="").stdout.strip()
+    return _split(_filter(_scan_diff(proj, ["diff", empty, ref], allow), allow))
 
 
 def scan_range(proj, rev_range):
@@ -551,9 +525,11 @@ def checkpoint(proj, event):
     proj = os.path.abspath(proj)
     res = {"ok": False, "sha": None, "event": event, "message": "", "block": None, "notes": []}
 
-    def stop(rule, message, file=None, line=None):
+    def stop(rule, message, file=None, line=None, blocks=None):
         res["message"] = message
         res["block"] = {"event": event, "file": file, "line": line, "rule": rule, "message": message}
+        if blocks:  # every scan block (the /go stop lists them all); the fields above stay the first
+            res["block"]["blocks"] = [{"file": x["file"], "line": x["line"], "rule": x["rule"]} for x in blocks[:BLOCKS_KEPT]]
         return res
 
     if _agent_shell():  # R19, here so the in-process callers (harness_state.save_point) refuse as the CLI does
@@ -564,8 +540,7 @@ def checkpoint(proj, event):
     if subject is None:
         return stop("event", body)
     if not own_repo(proj):
-        return stop("own-repo", "this project is not its own git repository (git init inside the project first); "
-                                "refusing to touch any other repository")
+        return stop("own-repo", OWN_REPO_REFUSAL)
     try:
         busy = _busy(proj)
         if busy:
@@ -591,11 +566,10 @@ def checkpoint(proj, event):
         res["notes"] = notes
         if blocks:
             b = blocks[0]
-            where = b["file"] + (f":{b['line']}" if b["line"] else "")
             git(proj, "reset", "-q", check=False)
             fix = "delete the file" if b["rule"] in ("env-file", "key-file") else "edit the file"
-            return stop(b["rule"], f"{b['rule']} in {where}: {fix}, or add a line to .harness/scan-allow "
-                                   f"({b['file']}:{b['rule']}), then /go", b["file"], b["line"])
+            return stop(b["rule"], f"{fix}, or allow it. {block_text(blocks)}. Then /go", b["file"], b["line"],
+                        blocks)
         trailer = f"Harness-Event: {event['kind']}"
         text = subject + "\n\n" + (body + "\n\n" if body else "") + trailer + "\n"
         git(proj, "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "--cleanup=verbatim", "-F", "-",
@@ -631,8 +605,7 @@ def tag_milestone(proj, n, title):
         res["message"] = "the milestone number must be a positive integer"
         return res
     if not os.path.isdir(proj) or not own_repo(proj):
-        res["message"] = ("this project is not its own git repository (git init inside the project first); "
-                          "refusing to touch any other repository")
+        res["message"] = OWN_REPO_REFUSAL
         return res
     try:
         head = git(proj, "rev-parse", "-q", "--verify", "HEAD", check=False).stdout.strip()
@@ -677,8 +650,7 @@ def undo(proj, now):
         res["message"] = "checkpoint.py undo is not for agent shells"
         return res
     if not os.path.isdir(proj) or not own_repo(proj):
-        res["message"] = ("this project is not its own git repository (git init inside the project first); "
-                          "refusing to touch any other repository")
+        res["message"] = OWN_REPO_REFUSAL
         return res
     if _state(proj).get("checkpoint_block"):
         res["message"] = (f"a save point is blocked: its files are uncommitted on purpose. Fix what /status {slug} "
@@ -731,7 +703,7 @@ def undo(proj, now):
         res["message"] = f"git could not run: {exc}"
         return res
     try:
-        os.remove(os.path.join(proj, ".harness", "snapshot.json"))
+        os.remove(hs.snap_path(proj))
     except OSError:
         pass
     restore = f"git stash apply {sha}"
@@ -754,8 +726,7 @@ def publish(proj, confirm, run=subprocess.run):
         res["message"] = "checkpoint.py publish is not for agent shells"
         return res
     if not os.path.isdir(proj) or not own_repo(proj):
-        res["message"] = ("this project is not its own git repository (git init inside the project first); "
-                          "refusing to touch any other repository")
+        res["message"] = OWN_REPO_REFUSAL
         return res
     try:
         if not git(proj, "rev-parse", "-q", "--verify", "HEAD", check=False).stdout.strip():
@@ -775,7 +746,7 @@ def publish(proj, confirm, run=subprocess.run):
             via = f" (tag {', '.join(tags)})" if tags else ""
             res["message"] = (f"{len(blocks)} secret(s) in commits not yet published, nothing pushed. First: commit "
                               f"{b.get('commit', '?')}{via}, {b['file']} line {b['line']} ({b['rule']}). Rewriting history "
-                              "is manual (HANDBOOK); an allowed line goes in .harness/scan-allow.")
+                              f"is manual (HANDBOOK). All blocks: {block_text(blocks)}.")
             return res
         gh_line = f"gh repo create {slug} --private --source . --remote origin"
         if not confirm and (notes or not has_origin):
@@ -815,8 +786,8 @@ AGENT_REFUSAL = "checkpoint.py commit is not for agent shells"
 
 
 def _agent_shell():
-    # opencode marks every agent shell with AGENT=1 and OPENCODE_SESSION_ID; the plugin and the templates have neither
-    return os.environ.get("AGENT") == "1" or bool(os.environ.get("OPENCODE_SESSION_ID"))
+    import harness_state as hs  # here, not at the top: harness_state imports this module lazily
+    return hs.agent_shell()
 
 
 def _undo_cli(text):

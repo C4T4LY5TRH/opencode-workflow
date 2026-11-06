@@ -1,12 +1,12 @@
 # HANDBOOK — the opencode one-person harness (v4: idea to shippable milestone)
 
-How it works and how to drive it. Security detail: `SECURITY.md`. Design: `docs/superpowers/specs/2026-10-27-harness-v4-front-half-design.md`, `2026-10-31-harness-v4-piece2-build-team-design.md` (+ `...-roadmap.md`).
+How it works and how to drive it. Security detail: `SECURITY.md`. Setup on a Mac: `TELEPORT.md`.
 
 ## 1. What this is
 A project-local opencode harness for one person vibecoding. Verified on opencode **2.2.5** (2026-11-04; the platform facts were read in 2.1.3 and re-checked for 2.2.0 and 2.2.5).
 - **Idea to approved plan, with specialists:** a brainstormer writes the brief, an architect the architecture, a designer (UI projects) the design
   and mockups, a planner the plan, a critic attacks it. You approve one set of documents; only then can code be written.
-- **Plan to shippable milestone, on autopilot:** after `/approve`, one `/go` builds the whole milestone: QA writes failing tests first, one step is built
+- **Plan to shippable milestone, on autopilot:** after `/approve`, one `/go` builds the whole milestone: QA writes failing tests first (a spike step, if the architecture has one, is built before them), one step is built
   at a time, QA re-runs every check, a reviewer reads it. Autopilot stops at SHIP, or earlier (see §2). Every green result is saved as a git commit (§10).
 - **Shipped, run, published:** `/ship yes` commits and tags the milestone, `/deploy` runs it on this Mac, `/publish` pushes it to a private GitHub repo (§11).
 - **Code decides the routing and the checks** (`scripts/next.py`, `scripts/harness_state.py`); the model only carries out the instruction.
@@ -55,7 +55,7 @@ the stop message names that command. Esc cuts a running turn.
 - `mini-projects/<slug>/`: its own git repo (`_template/` is the scaffold). BRIEF, BRAINSTORM, ARCHITECTURE, DESIGN, PLAN, CRITIQUE, QA, VISUAL, REVIEW are written by
   their agents; folders `design/` (mockups, screenshots), `tests/acceptance/` (QA's tests) and `requests/` are new. `.harness/state.json` and `.harness/lock`
   (gitignored, trusted code only) hold approval, steps, milestones, cost and the running chain.
-- `rules/` (the rulebook), `CHANGELOG.md`, `RESEARCH/`, `.harness/` (dashboard.html, bench-history/; gitignored).
+- `rules/` (the rulebook), `CHANGELOG.md`, `RESEARCH/`, `.harness/` (bench-history/; gitignored).
 
 ## 4. Commands (13)
 | Command | Does | Writes |
@@ -70,7 +70,7 @@ the stop message names that command. Esc cuts a running turn.
 | `/undo [slug]` | shelve everything since the last save point | git stash |
 | `/deploy [slug]`, `/deploy rollback\|stop [slug]` | run the last shipped milestone; go back one release; stop it | `apps/<slug>/` (not in git) |
 | `/publish [slug]`, then `/publish [slug] yes` | re-scan unpushed commits; push branch and tags to a private GitHub repo | GitHub |
-| `/status [slug]` | text status; the digest at DECIDE; refreshes the dashboard | `.harness/dashboard.html` |
+| `/status [slug]` | text status; the digest at DECIDE | none (reads state) |
 | `/review [slug]` | on-demand review, same reviewer | REVIEW.md |
 | `/research <q>` | cited facts, pages, screenshots (into `RESEARCH/` of the project if the first word is one) | `RESEARCH/` |
 
@@ -96,18 +96,17 @@ A worker the provider's content filter blocks ("Provider blocked the response") 
 | qa | claude-sonnet-5-5 | `tests/acceptance/**`, `QA.md` | any command (sandboxed) |
 | builder (one per turn) | claude-sonnet-5-5 | its step's files + `requests/step<n>.md`; never tests, documents, `.env`, `.git` | any command (sandboxed) |
 | reviewer | claude-opus-5-5 | `REVIEW.md` (plan problems go under `## Plan notes`, never FIX FIRST), `LEARNINGS.md` (on SHIP a 5-line `## M<n> retro` the planner reads for the next milestone), throwaway probes in `.review/` | read-only git + test runners + probes |
-| researcher | claude-haiku-5-5 | `RESEARCH/**` | ls, cat, html2md.py; web + Playwright |
+| researcher | claude-haiku-5-5 | `RESEARCH/**` | ls, cat; web + Playwright |
 **The reviewer** does two passes in one run: health (spec, tests, security), then a bug hunt. It tries to disprove each suspect bug and labels survivors
 PROVEN (a command it ran shows it), TRACED (exact path:line and input) or LEAD (a suspicion). Only PROVEN/TRACED can say FIX FIRST; leads are listed at `/ship`.
 REVIEW.md needs a `## Hunt` line per lens; without it no verdict is recorded, and after 2 tries the stage is STUCK: `/go retry`.
 Bench `models-resolve` checks the models exist; swap one in `opencode.json`.
 
-## 6. State, digest, dashboard
+## 6. State and digest
 `state.json` holds facts only; writers are `approve.sh`, `next.py`, the `/ship` template and the safety-gate plugin, never an agent. Each save keeps the last good copy as `state.json.bak`.
 - **Step done:** the plugin sees the step's check run verbatim at the project root (whitespace ignored). Exit 0: `done_at`. Failure: `attempts` +1 (at most once per step per turn), `last_failure` = `exit <n>` and the last 40 lines. Limit 2.
 - **Review and verify fresh:** the plugin records the REVIEW.md, QA.md and VISUAL.md verdicts and a hash of the code (README.md counts as code; other documents and `.harness/` do not); any code change makes them stale.
 - **Limits in code:** 16 delegations per human turn, one open at a time; one chain per project (lock, kept fresh while it works, expires after 30 minutes; a turn frees and continues only its own project, so a crash leftover waits for the 30 minutes); 2 attempts per automatic stage; the cost cap and turn cap (§2).
-  Dashboard: `.harness/dashboard.html`, one card per project with its cost, read-only; rebuilt by the commands.
 
 ## 7. Security in short (full table, push/publish and limits: `SECURITY.md`)
 Five layers: `policies` (hard denies), per-agent permissions (each agent writes only its own files), the safety-gate plugin (plan gate,
@@ -161,7 +160,6 @@ Code (never an agent) makes a git commit the moment a result is green, in the pr
 - **`/publish`** scans every commit not yet pushed (tags and merges too). With no `origin` it shows `gh repo create <slug> --private ...` and waits for `/publish yes`. It uses your own `gh` login.
 - **A secret already pushed:** rotate the key first; that is the real fix (GitHub may still serve the old commit by hash). Then, by hand in the project, rewrite history (for example `git filter-repo --force --path <file> --invert-paths`),
   re-add `origin`, `git push --force origin <branch> --tags`, and delete each removed tag on GitHub: `git push origin :refs/tags/<tag>` (`/publish` never deletes or moves a remote tag).
-- **Parallel building (removed):** piece 2 built up to 3 independent steps at once (`after:` lines, a batch picker). Piece 3 cut it: one builder per turn fails fast and is easier to follow. Last commit with it: `5bb4c0e`.
 
 ## 12. Seen live
-- Git-course acceptance runs: piece 1 $2.23, piece 2 $13.71. Piece 3's live run is not done. Projects approved before piece 3 (git-course, a-small-tool-that-draws) have no `## DEPLOY` in ARCHITECTURE.md and fail its check: the architect revises, you `/approve` again.
+- Git-course acceptance runs: piece 1 $2.23, piece 2 $13.71. Projects approved before piece 3 (git-course, a-small-tool-that-draws) have no `## DEPLOY` in ARCHITECTURE.md and fail its check: the architect revises, you `/approve` again.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Recorded project state for the harness (brief + architecture + plan; stdlib only).
 
-Library: parse_plan, load, save, approve, approved, ship, lock_brief, lock_fresh, docs, check_file,
+Library: parse_plan, load, save, approve, approved, ship_yes, lock_brief, lock_fresh, docs, check_file,
 tree_sha256, review_verdict, stage.
 CLI (the writing verbs run from command templates only, never from an agent shell):
   harness_state.py approve <project-dir>   record the human's approval (BRIEF + ARCHITECTURE + PLAN)
@@ -9,9 +9,7 @@ CLI (the writing verbs run from command templates only, never from an agent shel
   harness_state.py ship <project-dir> preview  the same checklist, spelled out (what the /ship template passes)
   harness_state.py ship <project-dir> yes  /ship yes: re-check, archive requests, ship save point, tag m<n>, record the milestone
   harness_state.py shiptarget <text>       "<slug> preview|yes" for the /ship template (sets the current project)
-  harness_state.py approved <project-dir>  print yes/no: is the current plan approved (read-only)
   harness_state.py tree <project-dir>      print the project's tree hash
-  harness_state.py review <project-dir>    print {"tree_sha256", "verdict"} for REVIEW.md as it is now (read-only)
 
 State lives in <project>/.harness/state.json; its shape is spec section 7. Only trusted code writes it.
 """
@@ -37,7 +35,7 @@ PORT_BASE = 4800     # a project's preview port is PORT_BASE + its number
 SCAN_NOTES_KEPT = 20  # = checkpoint.SCAN_NOTES_KEPT: the scan notes state.scan_notes keeps (the newest)
 AUTOPILOT_STAGES = ("TESTS", "BUILD", "REVIEW", "FIX", "VERIFY")  # the stages the plugin may chain
 # README.md is product code (it is in the tree hash); QA.md and VISUAL.md are agents' reports
-DOC_FILES = {"PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md", "NOTES.md", "LEARNINGS.md",
+DOC_FILES = {"PLAN.md", "REVIEW.md", "CRITIQUE.md", "NOTES.md", "LEARNINGS.md",
              "BRIEF.md", "AGENTS.md", "ARCHITECTURE.md", "BRAINSTORM.md", "DESIGN.md", "QA.md", "VISUAL.md"}
 DOC_DIRS = ("RESEARCH/", ".harness/", "requests/", "design/shots/", ".review/")
 WALK_SKIP = {".git", "node_modules"}
@@ -94,8 +92,7 @@ def _check_shape(data):
     def need(ok, what):
         if not ok:
             raise StateError(f"state.json: bad {what}")
-    for key in ("plan_sha256", "approved_at"):
-        need(data.get(key) is None or isinstance(data[key], str), key)
+    need(data.get("approved_at") is None or isinstance(data["approved_at"], str), "approved_at")
     need(data.get("fix_rounds") is None or _is_int(data["fix_rounds"]), "fix_rounds")
     steps = data.get("steps", [])
     need(isinstance(steps, list), "steps")  # absent is fine, null is not
@@ -109,7 +106,6 @@ def _check_shape(data):
         for key in ("milestone", "proves"):
             need(s.get(key) is None or isinstance(s[key], str), f"step {key}")
         need(s.get("covers") is None or isinstance(s["covers"], list), "step covers")
-        need(s.get("after") is None or isinstance(s["after"], list), "step after")
         need(s.get("design") is None or isinstance(s["design"], list), "step design")
     need(data.get("approved_sha256") is None or isinstance(data["approved_sha256"], str), "approved_sha256")
     brief = data.get("brief")
@@ -194,8 +190,42 @@ def _check_shape(data):
         need(isinstance(blk.get("event"), dict) and isinstance(blk.get("rule"), str)
              and isinstance(blk.get("message"), str) and (blk.get("file") is None or isinstance(blk["file"], str))
              and (blk.get("line") is None or _is_int(blk["line"])), "checkpoint_block")
+        bl = blk.get("blocks")  # optional: every scan block of the stop (absent in older state files)
+        need(bl is None or (isinstance(bl, list) and all(
+            isinstance(x, dict) and isinstance(x.get("file"), str) and isinstance(x.get("rule"), str)
+            and _is_int(x.get("line")) for x in bl)), "checkpoint_block")
     notes = data.get("scan_notes")
     need(notes is None or (isinstance(notes, list) and all(isinstance(n, str) for n in notes)), "scan_notes")
+
+
+def snap_path(proj):
+    return os.path.join(proj, ".harness", "snapshot.json")
+
+
+def steps_of(state, milestone):
+    """The plan steps of one milestone."""
+    return [s for s in state.get("steps", []) if isinstance(s, dict) and s.get("milestone") == milestone]
+
+
+def milestone_cost(state, milestone):
+    """USD spent on `milestone` so far (0 when the recorded cost belongs to another milestone)."""
+    cost = state.get("cost") or {}
+    return (cost.get("usd") or 0) if cost.get("milestone") == milestone else 0
+
+
+def agent_shell():
+    """True in an agent's shell: opencode marks every one with AGENT=1 and OPENCODE_SESSION_ID; a command template has neither."""
+    return os.environ.get("AGENT") == "1" or bool(os.environ.get("OPENCODE_SESSION_ID"))
+
+
+def write_atomic(path, text):
+    """Atomic: O_EXCL never follows a planted symlink at the temp name; replace swaps a symlink at `path`."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
 
 
 def save(proj, state):
@@ -208,16 +238,14 @@ def save(proj, state):
         if not isinstance(data, dict):
             raise StateError("not an object")
         _check_shape(data)
+        if "cost" in data:  # only the plugin writes cost: keep what it added since this caller loaded
+            state["cost"] = data["cost"]
         with open(path + ".bak.tmp", "w", encoding="utf-8") as fh:
             fh.write(old)
         os.replace(path + ".bak.tmp", path + ".bak")
     except (OSError, ValueError):  # StateError is a ValueError
         pass
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(state, fh, indent=2)
-        fh.write("\n")
-    os.replace(tmp, path)
+    write_atomic(path, json.dumps(state, indent=2) + "\n")
 
 
 def _bak_loads(proj):
@@ -292,7 +320,7 @@ def _mockup_shas(proj, design_text):
         screens = hd.parse_design(design_text)["screens"]
     except hd.DocError:
         return {}
-    return {path: _file_sha(proj, path) for _, path in screens}
+    return {hd.norm_path(path): _file_sha(proj, path) for _, path in screens}
 
 
 def approval_sha256(proj):
@@ -383,16 +411,13 @@ def docs(proj):
                 ui = out["brief"]["ui"]
                 design = None  # F2: a ui project with a valid DESIGN.md has its plan steps cite it
                 if ui:
-                    workshop = os.path.dirname(os.path.dirname(os.path.abspath(proj)))
-                    has_designer = os.path.exists(os.path.join(workshop, ".opencode", "agents", "designer.md"))
                     try:
                         if "DESIGN.md" not in texts:
                             raise hd.DocError("no DESIGN.md")
                         design = dict(hd.parse_design(texts["DESIGN.md"]), proj=proj)
-                    except hd.DocError:
-                        if has_designer:  # R14: no design to cite yet, so the plan cannot pass
-                            errors["PLAN.md"] = "PLAN.md: not checked until DESIGN.md is valid"
-                            cm = None  # not in `skipped`: nothing earlier reports it, so approve names it itself
+                    except hd.DocError:  # R14: no design to cite yet, so the plan cannot pass
+                        errors["PLAN.md"] = "PLAN.md: not checked until DESIGN.md is valid"
+                        cm = None  # not in `skipped`: nothing earlier reports it, so approve names it itself
                 if cm is not None:
                     out["plan_steps"] = attempt("PLAN.md", lambda: hd.check_plan(texts["PLAN.md"], out["arch"], cm, design))
                     if not ui and out["plan_steps"]:  # F2: a non-ui project ignores `design:` lines (one place: here)
@@ -469,6 +494,17 @@ def _unanswered(proj, d, latest):
         if pt["id"] not in cache[name]:
             out.append(f"{pt['id']} ({pt['target']}) unanswered in {name}")
     return out
+
+
+def _brief_lock_problem(brief, cur, slug):
+    """Why the brief is not locked as it stands (state's `brief` entry vs its current digest), or None when it is."""
+    if not isinstance(brief, dict):
+        return f"BRIEF.md is not locked (/go {slug} locks it)"
+    if brief.get("reopened"):
+        return f"BRIEF.md is reopened (/go {slug} re-locks it)"
+    if brief.get("sha256") != cur:
+        return f"BRIEF.md changed since it was locked (/go {slug} re-locks it)"
+    return None
 
 
 def _open_questions(brief):
@@ -615,7 +651,7 @@ def fix_running(proj):
     if not lock or not lock["fresh"]:
         return None
     try:
-        with open(os.path.join(proj, ".harness", "snapshot.json"), "r", encoding="utf-8") as fh:
+        with open(snap_path(proj), "r", encoding="utf-8") as fh:
             snap = json.load(fh)
         state = load(proj)
     except (OSError, ValueError, StateError):
@@ -650,13 +686,10 @@ def approve(proj, now):
     brief, cur = state.get("brief"), d["digests"].get("BRIEF.md")
     if cur is None:
         note(errors.get("BRIEF.md", "BRIEF.md does not exist yet"))
-    elif not isinstance(brief, dict):
-        note(f"BRIEF.md is not locked (/go {slug} locks it)")
-        note(err("BRIEF.md"))
-    elif brief.get("reopened"):
-        note(f"BRIEF.md is reopened (/go {slug} re-locks it)")
-    elif brief.get("sha256") != cur:
-        note(f"BRIEF.md changed since it was locked (/go {slug} re-locks it)")
+    elif (lock := _brief_lock_problem(brief, cur, slug)):
+        note(lock)
+        if not isinstance(brief, dict):
+            note(err("BRIEF.md"))
     else:
         note(err("BRIEF.md"))
     note(err("ARCHITECTURE.md"))
@@ -740,6 +773,10 @@ def block_reason(block, slug, retry=None):
     """The way out of a blocked save point, as the /go stop, /status and /approve say it (after 'save point
     blocked: '): a scan finding names the file, the rule and the allow line; any other block gives its own message."""
     file, rule = block.get("file"), block.get("rule")
+    if file and rule not in SCAN_RULE_FREE and block.get("blocks"):
+        import checkpoint  # noqa: E402  (lazy, as in save_point)
+        return (f"{checkpoint.block_text(block['blocks'])}. Fix the file or allow it (in mini-projects/{slug}), "
+                f"then {retry or f'/go {slug}'}")
     if file and rule not in SCAN_RULE_FREE:
         where = f"{file}:{block['line']}" if block.get("line") else file
         return (f"{where} {rule}. Fix the file or add '{file}:{rule}' to mini-projects/{slug}/.harness/scan-allow, "
@@ -770,7 +807,7 @@ def _drop_turn_record(proj, state):
     """A new approval or a shipped milestone ends the turn record: no file snapshot, no scope failure to give back."""
     state.pop("scope_failure", None)
     try:
-        os.remove(os.path.join(proj, ".harness", "snapshot.json"))
+        os.remove(snap_path(proj))
     except OSError:
         pass
 
@@ -843,7 +880,7 @@ def _ship_gate(proj):
             return None, f"NOT RECORDED: a critique round you asked for has not run: /go {slug}"
         unanswered = _unanswered(proj, d, latest)
         if unanswered:
-            return None, (f"NOT RECORDED: the critique round you asked for is not answered "
+            return None, (f"NOT RECORDED: serious critic points for {cm} are not answered "
                           f"({'; '.join(unanswered)}): /go {slug}")
     now_stage = stage(proj)  # one source of truth: record only when the stage table says SHIP
     if now_stage["stage"] != "SHIP":
@@ -872,23 +909,12 @@ def _record_shipped(proj, state, cm, d, slug, checkpoint_res=None, now=None):
     return f"MILESTONE SHIPPED: {cm}. Next: /go {slug} plans {nxt}."
 
 
-def ship(proj, now):
-    """TEST-ONLY record primitive: records the milestone with no commit and no tag. Production code must never call it
-    (`ship_yes` is what /ship yes runs). Records only when every recorded step is done and the review is a fresh SHIP;
-    requests are archived first. Returns (recorded, one-line message)."""
-    ctx, why = _ship_gate(proj)
-    if ctx is None:
-        return False, why
-    _archive_requests(proj, ctx["cm"])
-    return True, _record_shipped(proj, ctx["state"], ctx["cm"], ctx["d"], ctx["slug"])
-
-
 def ship_yes(proj, now):
     """`/ship yes` (spec 5.1): re-check SHIP, archive the milestone's requests (idempotent), the final save point
     `ship M<n>`, the tag `m<n>`, then record the milestone shipped. Any failure records nothing (a commit already made
     stays, and a retry skips what is done: nothing to stage is ok, a tag at HEAD is ok). Returns (recorded, message)."""
     import checkpoint  # lazily, as save_point does
-    if checkpoint._agent_shell():
+    if agent_shell():
         return False, "NOT RECORDED: shipping comes only from the human typing /ship <slug> yes, never from an agent shell"
     ctx, why = _ship_gate(proj)
     if ctx is None:
@@ -1001,20 +1027,30 @@ def _walk_files(proj):
     return out
 
 
-def _hash_files(proj, keep):
-    """sha256 over the project files whose relative path passes keep(rel), stable for equal content."""
+def project_files(proj):
+    """Relative paths of the project's files: git's view when proj is a repo root, else a walk."""
     rels = _git_files(proj)
-    if rels is None:
-        rels = _walk_files(proj)
-    h = hashlib.sha256()
-    for rel in sorted(set(rels)):
-        if not keep(rel):
-            continue
+    return _walk_files(proj) if rels is None else rels
+
+
+def file_hashes(proj, rels):
+    """{rel: sha256 of the file's bytes} for the readable files in `rels` (a deleted file, a directory or a broken
+    symlink is left out). Plain open(): it follows symlinks, so recorded tree hashes stay valid."""
+    out = {}
+    for rel in rels:
         try:
             with open(os.path.join(proj, rel), "rb") as fh:
-                digest = hashlib.sha256(fh.read()).hexdigest()
+                out[rel] = hashlib.sha256(fh.read()).hexdigest()
         except OSError:
-            continue  # deleted but still listed, a directory, a broken symlink
+            continue
+    return out
+
+
+def _hash_files(proj, keep):
+    """sha256 over the project files whose relative path passes keep(rel), stable for equal content."""
+    digests = file_hashes(proj, [r for r in sorted(set(project_files(proj))) if keep(r)])
+    h = hashlib.sha256()
+    for rel, digest in digests.items():
         h.update(f"{rel}\0{digest}\n".encode("utf-8", "surrogateescape"))
     return h.hexdigest()
 
@@ -1090,12 +1126,9 @@ def stage(proj):
 
     # row 3: the brief lock
     brief, cur = state.get("brief"), d["digests"].get("BRIEF.md")
-    if not isinstance(brief, dict) or brief.get("reopened") or brief.get("sha256") != cur:
-        error = errors.get("BRIEF.md") or _open_questions(d["brief"])
-        if error is None:
-            error = (f"BRIEF.md is reopened (/go {slug} re-locks it)" if isinstance(brief, dict) and brief.get("reopened")
-                     else f"BRIEF.md is not locked (/go {slug} locks it)" if not isinstance(brief, dict)
-                     else f"BRIEF.md changed since it was locked (/go {slug} re-locks it)")
+    lock = _brief_lock_problem(brief, cur, slug)
+    if lock:
+        error = errors.get("BRIEF.md") or _open_questions(d["brief"]) or lock
         return _stage_result("BRAINSTORM", f"the brief is not locked: settle BRIEF.md with the brainstormer, then "
                                            f"/go {slug} locks it", error=error)
 
@@ -1119,7 +1152,7 @@ def stage(proj):
     if cm is None:
         return _stage_result("DONE", "every milestone is shipped: the project is done")
 
-    steps = [s for s in state.get("steps", []) if isinstance(s, dict) and s.get("milestone") == cm]
+    steps = steps_of(state, cm)
     done_n, total_n = sum(1 for s in steps if s.get("done_at")), len(steps)
 
     def out(name, reason, step=None, error=None):
@@ -1143,9 +1176,8 @@ def stage(proj):
                                       f"{failed.get('attempts')} times: /go {slug} lets the architect revise "
                                       "ARCHITECTURE.md", failed, failed.get("last_failure"))
 
-    # row 7: DESIGN, only once a designer agent exists in this workshop
-    workshop = os.path.dirname(os.path.dirname(os.path.abspath(proj)))
-    if d["brief"]["ui"] and os.path.exists(os.path.join(workshop, ".opencode", "agents", "designer.md")):
+    # row 7: DESIGN
+    if d["brief"]["ui"]:
         if "DESIGN.md" not in d["texts"]:
             return out("DESIGN", f"the project has a UI and no DESIGN.md: /go {slug} runs the designer",
                        error="DESIGN.md does not exist yet")
@@ -1197,10 +1229,10 @@ def stage(proj):
 
 # --- v4 build stages (spec 3.1 rows 9a-9l) ---------------------------------------------------
 
-def next_step(steps, open_steps):
-    """The lowest-numbered step that is not done and not held by an open request, or None (one step per turn)."""
+def next_step(steps):
+    """The lowest-numbered step that is not done, or None (one step per turn)."""
     for s in steps:
-        if not s.get("done_at") and s.get("n") not in open_steps:
+        if not s.get("done_at"):
             return s
     return None
 
@@ -1363,19 +1395,6 @@ def _verify_gap(state, steps, tree, ui, cm, acceptance=True):
     return "ok", "verify is fresh"
 
 
-def verify_fresh(proj, state, ui=None):
-    """(True, ...) when the recorded VERIFY covers the current tree: every step check and the acceptance run exited 0,
-    the QA verdict is PASS and (ui projects) the VISUAL verdict is MATCH or MINOR (or the cap is reached with a verdict recorded for this milestone). Otherwise (False, the first gap)."""
-    d = docs(proj)
-    if ui is None:
-        ui = bool(d["brief"] and d["brief"]["ui"])
-    steps = [s for s in state.get("steps", []) if isinstance(s, dict)]
-    cm = steps[0].get("milestone") if steps else None  # the recorded steps are the approved milestone's
-    acceptance = not (d["brief"] and d["arch"]) or bool(_must(d, cm))  # unreadable docs: the run is still asked for
-    kind, why = _verify_gap(state, steps, tree_sha256(proj), ui, cm, acceptance)
-    return kind == "ok", why
-
-
 def _post_approval(proj, state, d, slug, cm, steps):
     """Rows 9c-9l on the recorded steps of milestone cm (9a and 9b are rows 1-6 of stage())."""
     done_n, total_n = sum(1 for s in steps if s.get("done_at")), len(steps)
@@ -1451,7 +1470,7 @@ def _post_approval(proj, state, d, slug, cm, steps):
         kind = "research" if r["kind"] == "RESEARCH" else "testfix"
         return res("BUILD", f"{kind} {r['step']}", next((s for s in steps if s.get("n") == r["step"]), None),
                    [{"kind": kind, "n": r["step"]}])
-    nxt = next_step(steps, set())
+    nxt = next_step(steps)
     if nxt is not None:
         return res("BUILD", f"step {nxt.get('n')}", nxt, [{"kind": "step", "n": nxt.get("n")}])
 
@@ -1471,7 +1490,7 @@ def _post_approval(proj, state, d, slug, cm, steps):
 # --- the current project and the preview ports (spec 6.1) ---------------------------------
 
 RESERVED_WORDS = ("cap", "retry")  # arguments of /go, never project names
-SLUG_RE = re.compile(r"[a-z0-9-][a-z0-9_-]*")  # same rule as approve.sh
+SLUG_RE = re.compile(r"[a-z0-9-][a-z0-9_-]*")
 NO_CURRENT = "no current project: name one, e.g. /go <slug>"
 
 
@@ -1487,11 +1506,7 @@ def _current_path(workshop):
 def set_current(workshop, slug):
     """Remember `slug` as the project a command without a name means (<workshop>/.harness/current)."""
     path = _current_path(workshop)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(slug + "\n")
-    os.replace(tmp, path)
+    write_atomic(path, slug + "\n")
 
 
 def resolve_slug(workshop, arg):
@@ -1586,7 +1601,7 @@ def main(argv):
             slug, _ = resolve_slug(workshop, None)
             print(slug or "")
             return 0 if slug else 1
-        if os.environ.get("AGENT") == "1" or os.environ.get("OPENCODE_SESSION_ID"):
+        if agent_shell():
             print("REFUSED: the current project is set by the human's command, never from an agent shell.",
                   file=sys.stderr)
             return 3
@@ -1597,7 +1612,7 @@ def main(argv):
         return 0
     if len(argv) == 3 and argv[1] == "resolve":
         # resolve <text>: the project a command template names (sets the current project): human only
-        if os.environ.get("AGENT") == "1" or os.environ.get("OPENCODE_SESSION_ID"):
+        if agent_shell():
             print("REFUSED: the current project is set by the human's command, never from an agent shell.",
                   file=sys.stderr)
             return 3
@@ -1609,7 +1624,7 @@ def main(argv):
         return 0
     if len(argv) == 3 and argv[1] == "shiptarget":
         # shiptarget <text>: "<slug> preview|yes" for the /ship template (sets the current project): human only
-        if os.environ.get("AGENT") == "1" or os.environ.get("OPENCODE_SESSION_ID"):
+        if agent_shell():
             print("REFUSED: the current project is set by the human's command, never from an agent shell.",
                   file=sys.stderr)
             return 3
@@ -1620,22 +1635,15 @@ def main(argv):
         print(out)
         return 0
     ship_form = len(argv) == 4 and argv[1] == "ship" and argv[3] in ("yes", "preview")
-    if not (len(argv) == 3 or ship_form) or argv[1] not in ("approve", "ship", "approved", "tree", "review"):
-        print("usage: harness_state.py approve|ship|approved|tree|review <project-dir> [yes] | current <workshop> "
+    if not (len(argv) == 3 or ship_form) or argv[1] not in ("approve", "ship", "tree"):
+        print("usage: harness_state.py approve|ship|tree <project-dir> [yes] | current <workshop> "
               "[slug] | resolve <text> | shiptarget <text>", file=sys.stderr)
         return 2
     cmd, proj = argv[1], os.path.abspath(argv[2])
     if cmd == "tree":
         print(tree_sha256(proj))
         return 0
-    if cmd == "review":
-        print(json.dumps({"tree_sha256": tree_sha256(proj), "verdict": review_verdict(proj)}))
-        return 0
-    if cmd == "approved":
-        print("yes" if approved(proj) else "no")
-        return 0
-    # opencode marks every agent shell with AGENT=1 and OPENCODE_SESSION_ID; a command template has neither
-    if os.environ.get("AGENT") == "1" or os.environ.get("OPENCODE_SESSION_ID"):
+    if agent_shell():
         what = ("approval comes only from the human typing /approve <slug>" if cmd == "approve"
                 else "shipping comes only from the human typing /ship <slug>")
         print(f"REFUSED: {what}, never from an agent shell.", file=sys.stderr)

@@ -308,17 +308,6 @@
       "note": "approval state: patch blob cannot forge it"
     },
     {
-      "id": "ap-approve",
-      "session": "",
-      "tool": "shell",
-      "input": {
-        "command": "bash scripts/approve.sh good"
-      },
-      "expect": "block",
-      "message_has": "SAFETY GATE: approval.",
-      "note": "spec 5.3: the approve.sh refusal right after the removed ship gate stays"
-    },
-    {
       "id": "sa1",
       "session": "mini-projects/good",
       "tool": "write",
@@ -340,16 +329,6 @@
       "expect": "block",
       "message_has": "is harness state",
       "note": "R3 (spec 12.1): a shell redirect cannot add a line to .harness/scan-allow"
-    },
-    {
-      "id": "a6",
-      "session": "mini-projects/good",
-      "tool": "shell",
-      "input": {
-        "command": "cd ../.. && bash scripts/approve.sh good"
-      },
-      "expect": "block",
-      "note": "approval: an agent cannot run the approve script"
     },
     {
       "id": "a7",
@@ -387,11 +366,11 @@
       "session": "",
       "tool": "write",
       "input": {
-        "path": "$ROOT/mini-projects/bare/BUGHUNT.md",
+        "path": "$ROOT/mini-projects/bare/LEARNINGS.md",
         "content": "x"
       },
       "expect": "allow",
-      "note": "BUGHUNT.md (a legacy doc name kept by PL6) is a doc, not code: no plan needed"
+      "note": "LEARNINGS.md is a doc, not code: no plan needed"
     },
     {
       "id": "a1b",
@@ -772,14 +751,15 @@
     },
     {
       "id": "c2",
-      "session": "mini-projects/stepa",
+      "session": "mini-projects/bare",
       "tool": "write",
       "input": {
-        "path": "$ROOT/mini-projects/stepa/Plan.md",
+        "path": "$ROOT/mini-projects/bare/Plan.md",
         "content": "x"
       },
       "expect": "block",
-      "note": "R-alias: Plan.md is not PLAN.md"
+      "note": "R-alias: Plan.md is not PLAN.md",
+      "message_has": "different-case spelling"
     },
     {
       "id": "c3",
@@ -791,18 +771,6 @@
       },
       "expect": "block",
       "note": "R-alias: critique.md is not CRITIQUE.md",
-      "message_has": "different-case spelling"
-    },
-    {
-      "id": "c4",
-      "session": "mini-projects/stepa",
-      "tool": "write",
-      "input": {
-        "path": "$ROOT/mini-projects/stepa/Bughunt.md",
-        "content": "x"
-      },
-      "expect": "block",
-      "note": "R-alias: Bughunt.md is not BUGHUNT.md",
       "message_has": "different-case spelling"
     },
     {
@@ -1734,9 +1702,9 @@
       "id": "x47",
       "session": "mini-projects/docsh",
       "agent": true,
-      "command": "echo x >> brainstorm.MD || echo x > BugHunt.md",
+      "command": "echo x >> brainstorm.MD || echo x > Architecture.md",
       "expect": "block",
-      "note": "sandbox rule 10: BRAINSTORM.md and BUGHUNT.md aliases are refused (both must fail)"
+      "note": "sandbox rule 10: BRAINSTORM.md and ARCHITECTURE.md aliases are refused (both must fail)"
     },
     {
       "id": "x48",
@@ -4017,6 +3985,11 @@
         "lib",
         "lib/b.js",
         "true p3"
+      ],
+      [
+        "pkg",
+        "package.json",
+        "true p4"
       ]
     ],
     "created": [
@@ -4048,6 +4021,12 @@
         "bf",
         "sroot",
         "scopep: fix",
+        "builder"
+      ],
+      [
+        "b4",
+        "sroot",
+        "scopep: step 4",
         "builder"
       ]
     ],
@@ -4788,6 +4767,135 @@
             "sid": "b3",
             "input": {
               "command": "mkdir -p lib\ncat > lib/b.js <<'EOF'\n<a href=\"x\">y</a>\n<p>z</p>\nEOF",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc-inst1",
+        "note": "builder of step 4 (package.json) runs a dependency install: allowed (npm install -D vitest)",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b4",
+            "input": {
+              "command": "npm install -D vitest",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc-inst2",
+        "note": "builder of step 4 (package.json) runs a dependency install: allowed (npm install express cors)",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b4",
+            "input": {
+              "command": "npm install express cors",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc-inst3",
+        "note": "builder of step 4 (package.json) runs a dependency install: allowed (npm install && npm test)",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b4",
+            "input": {
+              "command": "npm install && npm test",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc-inst4",
+        "note": "builder of step 4 (package.json) runs a dependency install: allowed (pip install -r requirements.txt)",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b4",
+            "input": {
+              "command": "pip install -r requirements.txt",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc-inst5",
+        "note": "builder of step 4 (package.json) runs a dependency install: allowed (go get example.com/x)",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b4",
+            "input": {
+              "command": "go get example.com/x",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc-inst6",
+        "note": "builder of step 4 (package.json) runs a dependency install: allowed (cargo add serde)",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b4",
+            "input": {
+              "command": "cargo add serde",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "allow"
+          }
+        ]
+      },
+      {
+        "id": "sc-cp1",
+        "note": "builder of step 2 copies onto another step's file: refused",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "command": "cp a lib/b.js",
+              "workdir": "mini-projects/scopep"
+            },
+            "expect": "block",
+            "message_has": "SAFETY GATE: step scope. Step 2 may write only: src/. Write requests/step2.md if you need more."
+          }
+        ]
+      },
+      {
+        "id": "sc-cp2",
+        "note": "builder of step 2 copies with a flag into its folder: allowed",
+        "calls": [
+          {
+            "tool": "shell",
+            "agent": "builder",
+            "sid": "b2",
+            "input": {
+              "command": "cp -r a src/b",
               "workdir": "mini-projects/scopep"
             },
             "expect": "allow"

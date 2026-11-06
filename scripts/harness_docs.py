@@ -97,7 +97,7 @@ def paths_overlap(a, b):
 # Paths no builder step may own: QA's tests, request/research files, designer and inspector output, harness state, the doc files.
 HARNESS_OWNED = ("tests/acceptance/", "requests/", "RESEARCH/", "design/", ".harness/",
                  "BRIEF.md", "BRAINSTORM.md", "ARCHITECTURE.md", "DESIGN.md", "PLAN.md", "REVIEW.md",
-                 "CRITIQUE.md", "BUGHUNT.md", "QA.md", "VISUAL.md")
+                 "CRITIQUE.md", "QA.md", "VISUAL.md")
 
 
 # --- BRIEF.md ------------------------------------------------------------------------------------
@@ -283,7 +283,7 @@ def parse_architecture(text, feature_ids, must_ids, ui=False):
 # --- PLAN.md -------------------------------------------------------------------------------------
 
 def parse_plan(text):
-    """PLAN.md text -> [{"n", "title", "files", "check", "covers", "proves", "after", "design"}]. Raises PlanError naming what is wrong."""
+    """PLAN.md text -> [{"n", "title", "files", "check", "covers", "proves", "design"}]. Raises PlanError naming what is wrong."""
     lines = _lines(text)
     start = next((i for i, l in enumerate(lines) if re.match(r"^##\s+STEPS\s*$", l, re.I)), None)
     if start is None:
@@ -311,9 +311,9 @@ def parse_plan(text):
         if n != idx:
             raise PlanError(f"step {n} ('{title}') is out of order: expected step {idx} (steps run 1..N with no gaps)")
         who = f"step {n} ('{title}')"
-        files, checks, covers, proves, after, design = [], [], [], None, None, []
+        files, checks, covers, proves, design = [], [], [], None, []
         for l in rest:
-            m = re.match(r"^\s*[-*]\s*(files|done when|covers|proves|after|design)\s*:\s*(.*)$", l, re.I)
+            m = re.match(r"^\s*[-*]\s*(files|done when|covers|proves|design)\s*:\s*(.*)$", l, re.I)
             if not m:
                 continue
             key = m.group(1).lower()
@@ -325,13 +325,6 @@ def parse_plan(text):
                     covers = _ids(m.group(2), "F", f"PLAN.md {who}")
                 except DocError as exc:
                     raise PlanError(str(exc))
-            elif key == "after":
-                raw_after = m.group(2).strip().strip("`").strip()
-                after = []
-                if raw_after and raw_after.lower().rstrip(".") != "none":
-                    toks = [t for t in re.split(r"[,\s]+", raw_after) if t]
-                    # PL4: `after:` is parsed and ignored; a malformed token is not an error (yields [])
-                    after = [int(t) for t in toks] if all(re.fullmatch(r"\d+", t) for t in toks) else []
             elif key == "design":
                 design = [t.strip().strip("`").strip() for t in m.group(2).split(",")]
                 design = [t for t in design if t and t.lower().rstrip(".") != "none"]
@@ -352,7 +345,7 @@ def parse_plan(text):
         if not m or not m.group(1).strip():
             raise PlanError(f"{who}: 'done when' needs exactly one command inside one pair of backticks, got: {raw or '(empty)'}")
         steps.append({"n": n, "title": title, "files": files, "check": m.group(1).strip(),
-                      "covers": covers, "proves": proves, "after": after, "design": design})
+                      "covers": covers, "proves": proves, "design": design})
     return steps
 
 

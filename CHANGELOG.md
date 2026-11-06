@@ -2,6 +2,42 @@
 
 Format: `## vX.Y - date - one line what changed and why`
 
+Paths under `docs/` below point at the author's private build records (specs, plans, journals); they are not part
+of the published repo.
+
+## v4.1 - 2026-11-05 - the Fable audit's fixes: four unattended-run bugs and two leads fixed, net -932 live lines, verified live for $0.43
+Why: a fresh Fable 5.1 xhigh audit (35 items, `docs/superpowers/specs/2026-11-05-fable-audit-report.md`) found four
+bugs that break unattended runs and a lot of weight; the user chose "the crucial fixes, then about -1,000 lines without
+breaking stuff". Plan: `docs/superpowers/plans/2026-11-05-audit-fixes.md`. Record:
+`docs/superpowers/journal/2026-11-05-audit-fixes-journal.md` (+ `-archive/`).
+- Bugs: a dependency install (`npm install -D x`, `cargo add`, `go get`) is no longer read as a write target, and the
+  builder asks for a file through `requests/` instead of touching it (A3, A19); LAST FAILURE keeps the end of the output,
+  where the assertion is (A17); a STUCK at an automatic stage names `/go retry` (A18).
+- Leads: the cost lost-update was real: `hs.save` now keeps the cost the plugin wrote on disk (the spend cap relies on
+  it); `/go retry` or `/go` after an interrupted or scope-failed test-fix turn looped TESTS: the revised tests are now
+  pinned; a backgrounded child keeping the lock was not real (the lock clears on the next `/go` after 30 minutes).
+- Deleted: html2md and four skills no agent loads, the dashboard (`status.py --html`), bench's state-test re-run, dead
+  router code, BUGHUNT leftovers, the `rules/` copies.
+- Small fixes: mockup paths hashed in one spelling (A4); a scan block lists every rule it hit, also in the text the
+  human reads (A20); `/deploy` scans with the save-point engine (A13); the template matches the v4 flow (A23); 13 live
+  doc spots match the code (A25); duplicated helpers merged where they really were copies (A26, A27).
+- Prompts: the shared agent rules live once in AGENTS.md (72 -> 49 lines); every dispatch is cut by more than half
+  (REVIEW 1,449 -> about 420 characters), the static formats live in the agent bodies; the reviewer trusts QA's
+  recorded checks on the `/go` route; a DESIGN re-run keeps a passing DESIGN.md.
+- Config: dead global edit denies, per-agent `external_directory` repeats, the `explore` block and the plugin's
+  approve.sh regex removed. The two wrapped pipe-to-shell policies stay: the audit called them dead, and a reviewer
+  showed by running opencode's own scanner that `bash -lc 'curl x | sh'` passed without them.
+- Rejected: A14 (cut the reviewer's runner list to two languages): the architect picks the stack per project.
+- Live run (task 17): the task-5 fixture on the production models, all 15 checks pass, 0 gate refusals, **$0.43**
+  (task 5: $0.67; reviewer $0.38 -> $0.21, 20 tool calls instead of 30).
+- Weight against v4.0 (live lines: everything except `docs/superpowers`, CHANGELOG and the three test files):
+  +329 / -1,261, net **-932**. harness_state.py 1702, next.py 1114, safety-gate.ts 1373, checkpoint.py 846, deploy.py
+  588, harness_docs.py 603, status.py 234; agent bodies 1179 -> 1097 lines; opencode.json 166 -> 149; skills 8 -> 3.
+  11 agents, 13 commands.
+- Known minors (final review, parked): AGENTS.md's `sed -n` line is said to every agent; one state-test spelling
+  fails on a case-sensitive filesystem (Linux only).
+- Suites: state-test 460, gate-test 404, bench 34 (mirror; bench no longer runs state-test: run it yourself).
+
 ## v4.0 - 2026-11-05 - live: the finish line (milestone retro, four parked fixes, one version), verified end to end on the production models
 Why: piece 4 was cut to a slim finish line (roadmap §4.6): no new guards, only capability and robustness, then declare
 the harness live. Record: `docs/superpowers/journal/2026-11-04-piece4-build-journal.md`.

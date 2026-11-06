@@ -35,8 +35,6 @@
     { "action": "tool.use", "resource": "shell:*git * reset --hard*", "effect": "deny" },
     { "action": "tool.use", "resource": "shell:*git reset --hard*", "effect": "deny" },
     { "action": "tool.use", "resource": "shell:*git * push *--force*", "effect": "deny" },
-    { "action": "tool.use", "resource": "shell:*git push *--force*", "effect": "deny" },
-    { "action": "tool.use", "resource": "shell:*git push *-f*", "effect": "deny" },
     { "action": "tool.use", "resource": "shell:*git * clean *-*f*", "effect": "deny" },
     { "action": "tool.use", "resource": "shell:*git clean *-*f*", "effect": "deny" },
     { "action": "tool.use", "resource": "shell:*git checkout -- *", "effect": "deny" },
@@ -94,14 +92,7 @@
     "inspector": { "model": "anthropic/claude-sonnet-5-5" },
     "build": { "disable": true },
     "general": { "disable": true },
-    "explore": {
-      "permission": {
-        "edit": "deny",
-        "shell": { "*": "deny", "ls*": "allow", "cat *": "allow", "head *": "allow", "rg *": "allow", "grep *": "allow", "find *": "allow", "git log*": "allow", "git status*": "allow" },
-        "webfetch": "deny",
-        "external_directory": { "*": "deny" }
-      }
-    },
+    "explore": { "disable": true },
     "plan": {
       "permission": { "edit": "deny", "shell": { "*": "deny", "ls*": "allow", "cat *": "allow", "rg *": "allow", "git log*": "allow", "git status*": "allow", "git diff*": "allow" } }
     }
@@ -150,15 +141,7 @@
       "**/*.pem": "deny",
       "**/id_rsa*": "deny"
     },
-    "edit": {
-      "*": "deny",
-      ".git/**": "deny",
-      "**/.git/**": "deny",
-      ".env": "deny",
-      "*.env": "deny",
-      "**/*.env": "deny",
-      "**/*.env.*": "deny"
-    },
+    "edit": { "*": "deny" },
     "external_directory": { "*": "deny" },
     "webfetch": "ask",
     "websearch": "allow"

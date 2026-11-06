@@ -25,10 +25,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SLUG="$(python3 "$HERE/harness_state.py" resolve "${1:-}")" || {
   echo "usage: /approve [<slug>]   (a project name, or none for the current project)" >&2; exit 2; }
 PROJ="$(cd "$HERE/.." && pwd)/mini-projects/$SLUG"
-if [ ! -f "$PROJ/PLAN.md" ]; then
-  echo "REFUSED: no PLAN.md in mini-projects/$SLUG. Run /go $SLUG first." >&2
-  exit 1
-fi
 
 # the library approves BRIEF + ARCHITECTURE + PLAN under one approval hash;
 # plan parsing, step recording and the state file are its job

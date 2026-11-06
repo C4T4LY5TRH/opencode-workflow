@@ -41,13 +41,12 @@
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Pp][Ll][Aa][Nn]\.[Mm][Dd]$")
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Rr][Ee][Vv][Ii][Ee][Ww]\.[Mm][Dd]$")
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Cc][Rr][Ii][Tt][Ii][Qq][Uu][Ee]\.[Mm][Dd]$")
-  (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Bb][Uu][Gg][Hh][Uu][Nn][Tt]\.[Mm][Dd]$")
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Qq][Aa]\.[Mm][Dd]$")
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Vv][Ii][Ss][Uu][Aa][Ll]\.[Mm][Dd]$"))
 
 ; no symlink named AGENTS.md, any letter case, anywhere (R30): after a read, opencode loads every AGENTS.md from the
 ; file's folder up into the model's context, following links, OUTSIDE this sandbox (read.ts:82-106), so a link to
-; ~/.config/opencode/service.json would land in the context. AGENTS.md is the only file name opencode 2.2.0 loads that
+; ~/.config/opencode/service.json would land in the context. AGENTS.md is the only file name opencode loads that
 ; way. A regular AGENTS.md stays writable; so do other links (node_modules/.bin). Covers `ln -s` and `mv x AGENTS.md`.
 ; (gate sbx-agents-*)
 (deny file-write-create (require-all (vnode-type SYMLINK) (regex #"/[Aa][Gg][Ee][Nn][Tt][Ss]\.[Mm][Dd]$")))
@@ -55,8 +54,7 @@
 ; a project's own opencode config (R30): opencode loads `.opencode/` (plugins run in the server, outside this
 ; sandbox), `opencode.json(c)`, `.claude/` and `.agents/` (skills) from the session's folder and its parents. No
 ; session sits in a project today (sessions start at the workshop root; session_move and worktree_* are denied in
-; opencode.json), and nothing legitimate writes these, so no agent shell may: the template's opencode.json is
-; copied by new-project.sh, outside the sandbox. Any letter case. (gate sbx-projcfg-*)
+; opencode.json), and nothing legitimate writes these, so no agent shell may. Any letter case. (gate sbx-projcfg-*)
 (deny file-write*
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/\.([Oo][Pp][Ee][Nn][Cc][Oo][Dd][Ee]|[Cc][Ll][Aa][Uu][Dd][Ee]|[Aa][Gg][Ee][Nn][Tt][Ss])(/|$)")
   (regex #"/[Mm][Ii][Nn][Ii]-[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/[^/]+/[Oo][Pp][Ee][Nn][Cc][Oo][Dd][Ee]\.[Jj][Ss][Oo][Nn][Cc]?$"))

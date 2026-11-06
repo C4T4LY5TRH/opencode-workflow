@@ -6,7 +6,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSHOP="$(cd "$HERE/.." && pwd)"
-WANT_OPENCODE="2.2.5"   # version the harness was verified against (2026-11-04, see docs/superpowers/journal/2026-11-04-piece4-build-journal.md)
+WANT_OPENCODE="2.2.5"   # version the harness was verified against (2026-11-04)
 fail=0
 ok()   { echo "  [ OK ] $*"; }
 warn() { echo "  [WARN] $*"; }
@@ -16,7 +16,7 @@ echo "workshop: $WORKSHOP"
 
 if command -v opencode >/dev/null 2>&1; then
   v="$(opencode --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-  if [ "$v" = "$WANT_OPENCODE" ]; then ok "opencode $v"; else warn "opencode $v (verified on $WANT_OPENCODE; check the facts in docs/audit/research still hold)"; fi
+  if [ "$v" = "$WANT_OPENCODE" ]; then ok "opencode $v"; else warn "opencode $v (verified on $WANT_OPENCODE; re-run the bench and one real project before trusting the gates)"; fi
 else
   bad "opencode not found - install it first: https://opencode.ai"
 fi
@@ -28,7 +28,7 @@ else
   bad "node not found (needed for Playwright MCP and the gate test)"
 fi
 
-if command -v python3 >/dev/null 2>&1; then ok "python3 $(python3 --version 2>&1 | awk '{print $2}')"; else bad "python3 not found (bench, html2md)"; fi
+if command -v python3 >/dev/null 2>&1; then ok "python3 $(python3 --version 2>&1 | awk '{print $2}')"; else bad "python3 not found (bench)"; fi
 
 if [ -x /usr/bin/sandbox-exec ]; then
   ok "sandbox-exec present (every agent shell runs in it)"
@@ -90,6 +90,7 @@ bash "$HERE/bench.sh" | sed 's/^/  /'
 echo
 if [ "$fail" = 0 ]; then
   echo "READY. Start the harness with:  cd \"$WORKSHOP\" && opencode"
+  echo "Then run:  python3 scripts/state-test.py   (the bench does not run it)"
 else
   echo "NOT READY - fix the [FAIL] lines above, then re-run."
   echo "(plugins-alive fails until opencode has started once in the workshop: run opencode, quit, re-run this.)"

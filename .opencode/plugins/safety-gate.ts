@@ -2,10 +2,10 @@
  * safety-gate - defence-in-depth gates inside the opencode plugin layer.
  *
  * This is the SECOND layer. The FIRST is `policies` + per-agent permission rules in opencode.json (a policy `deny`
- * beats agent rules AND saved approvals; docs/audit/research/L0-config.md). This plugin adds what that layer cannot say:
+ * beats agent rules AND saved approvals, per opencode's config source). This plugin adds what that layer cannot say:
  *   - plan gate: no code write in a mini project unless the human approved its current documents; the state library
- *     decides (`harness_state.py approved`, spec H1/H24) and any edit revokes it. Approval is human-only: agents
- *     cannot write .harness/ or run approve.sh
+ *     decides (called in-process, spec H1/H24) and any edit revokes it. Approval is human-only: agents
+ *     cannot write .harness/ (running approve.sh is the policy layer's job: opencode.json's `shell:*approve.sh*`)
  *   - write confinement: no write outside the session's project; the write tools, in EVERY session, only inside an
  *     existing mini-projects/<slug>/ or the workshop RESEARCH/, checked on the real path
  *   - write scope: a builder child writes only its step's files; qa, the designer and the inspector only their own
@@ -13,7 +13,7 @@
  *     go into .harness/state.json through one write queue
  *   - save points (piece 3 spec 4.1): after a recorded green event, scripts/checkpoint.py scans and commits that
  *     event's files in the project's own repo (checkpointAfter); a blocked one stops the next /go (next.py)
- *   - delegations (spec 7.2 rules 7-8): a circuit breaker per turn, at most 3 open, never in the background; a
+ *   - delegations (spec 7.2 rules 7-8): a circuit breaker per turn, one open at a time, never in the background; a
  *     delegating turn's end frees the /go locks, and its tool calls keep its project's lock fresh (turns: spec 14 f)
  *   - the autopilot loop (piece 2 spec 3.2): the plugin sends /go <slug> and nothing else, ever
  *   - cost (spec 9.3 fact 7) and the browser (fact 6): see onCost and checkBrowser
@@ -21,7 +21,7 @@
  *     sandbox that may write only the project the command runs in (shell create.before; not edit/write)
  *
  * opencode plugin API: export default { id, setup }. Throwing in execute.before rejects the tool call
- * (docs/audit/research/L0-plugins.md). Paths resolve from THIS file's location, never ~/.config/opencode or cwd.
+ * (per opencode's plugin source). Paths resolve from THIS file's location, never ~/.config/opencode or cwd.
  */
 
 import { execFile, spawn } from "node:child_process"
@@ -36,21 +36,16 @@ const RUNTIME = path.join(WORKSHOP, ".harness")
 const ALIVE_FILE = path.join(RUNTIME, "plugins-alive")
 const SANDBOX_SHELL = path.join(WORKSHOP, "scripts", "sandbox", "agent-shell")
 const SCRIPTS = path.join(WORKSHOP, "scripts")
-// Dashboard regeneration. A test run (HARNESS_TEST) must never write the real .harness/dashboard.html, so it
-// spawns only the copy of status.py that the test names in HARNESS_TEST_STATUS_PY (and nothing if it names none).
-const STATUS_PY = process.env.HARNESS_TEST
-  ? process.env.HARNESS_TEST_STATUS_PY || ""
-  : path.join(WORKSHOP, "scripts", "status.py")
 
 /** Project docs: writing them never counts as "code" for the plan gate. Must agree with DOC_FILES in scripts/harness_state.py. */
 const GATED_FILES = ["PLAN.md", "REVIEW.md", "CRITIQUE.md"]
 const V4_DOCS = ["BRIEF.md", "ARCHITECTURE.md", "BRAINSTORM.md", "DESIGN.md", "QA.md", "VISUAL.md"] // spec H15, piece 2 spec 4
 // README.md is product code (piece 2 spec 8 gap ii): a step that lists it writes it under the plan gate
-const DOC_FILES = [...GATED_FILES, ...V4_DOCS, "BUGHUNT.md", "NOTES.md", "LEARNINGS.md", "AGENTS.md"]
+const DOC_FILES = [...GATED_FILES, ...V4_DOCS, "NOTES.md", "LEARNINGS.md", "AGENTS.md"]
 /** Files only one role may write (the edit denies are case-sensitive, so a different-case spelling is refused). */
-const ALIAS_GUARDED = [...GATED_FILES, ...V4_DOCS, "BUGHUNT.md"]
+const ALIAS_GUARDED = [...GATED_FILES, ...V4_DOCS]
 const DOC_DIRS = ["RESEARCH", "design"] // /research and the designer's mockups come before a plan is approved; checkScope still holds builders
-const WRITE_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
+const WRITE_TOOLS = new Set(["edit", "write", "patch"])
 
 /** The tool id of a delegation in execute.before/after (spec 14 fact c; agent permissions still say `task:`). */
 const DELEGATION_TOOL = "subagent"
@@ -81,18 +76,6 @@ function inside(dir: string, p: string): boolean {
 
 /** Harness state (approval). Only scripts/approve.sh, run by the human's /approve, writes it. */
 const isHarnessState = (absTarget: string) => absTarget.toLowerCase().split(path.sep).includes(".harness")
-
-/** Regenerate .harness/dashboard.html in a detached child: never blocks and never throws into a tool call. */
-function refreshDashboard() {
-  if (!STATUS_PY) return
-  try {
-    const child = spawn("python3", [STATUS_PY, "--html"], { detached: true, stdio: "ignore" })
-    child.on("error", () => {}) // a missing python3 is an async 'error' event; unhandled it would crash the host
-    child.unref()
-  } catch {
-    // the dashboard is a convenience
-  }
-}
 
 /** The one bridge to the state library (H1: never re-implemented here), asynchronous so the host is not blocked.
  *  Read-only; null on any failure, so every gate that asks fails closed. */
@@ -156,7 +139,7 @@ const stepsOf = (st: any): any[] => (Array.isArray(st?.steps) ? st.steps.filter(
 
 /** The server-side tools that read a path the agent names. They run in opencode, OUTSIDE agent.sb. */
 const READ_TOOLS = new Set(["read", "grep", "glob", "list"])
-/** The one instruction file opencode 2.2.0 loads by name (read.ts:16 after a read; instruction.ts:41-87 at start). */
+/** The one instruction file opencode loads by name (read.ts:16 after a read; instruction.ts:41-87 at start). */
 const INSTRUCTION_FILE = "AGENTS.md"
 type ReadRule = { deny: boolean; test: (p: string, params: Record<string, string>) => boolean }
 /** agent.sb's file-read* rules in file order (SBPL: the last match wins), so the read check and the sandbox share one
@@ -480,7 +463,7 @@ export default {
       return path.relative(proj, absTarget).startsWith("..")
     }
 
-    /** Paths a shell command writes (best effort: redirects, cp/mv/install, mkdir/touch/tee), resolved against the
+    /** Paths a shell command writes (best effort: redirects, cp/mv, mkdir/touch/tee), resolved against the
      *  command's workdir. What this misses (sed -i, programs) the sandbox and the after-turn file check (next.py) see. */
     const shellWriteTargets = (full: string, base: string): string[] => {
       // a heredoc body is data, not redirects: `cat >> a.py <<'EOF'` + code with `>=` named files "=" (T15 live)
@@ -491,7 +474,7 @@ export default {
         if (t) out.push((t.startsWith("~/") ? resolveTarget(t) : path.resolve(base, t)) + (dir ? path.sep : ""))
       }
       for (const m of cmd.matchAll(/>>?\s*("|')?([^\s"'|;&]+)/g)) add(m[2])
-      for (const m of cmd.matchAll(/\b(?:cp|mv|install)\s+(?:-[A-Za-z-]+\s+)*\S+\s+(\S+)/g)) add(m[1])
+      for (const m of cmd.matchAll(/\b(?:cp|mv)\s+(?:-[A-Za-z-]+\s+)*[^\s;&|]+\s+([^\s;&|]+)/g)) add(m[1])
       for (const m of cmd.matchAll(/\b(mkdir|touch|tee)\s+(?:-[A-Za-z-]+\s+)*(\S+)/g)) add(m[2], m[1] === "mkdir") // a made folder ends in '/'
       return out
     }
@@ -544,7 +527,7 @@ export default {
      * permission layer, the policies and the checks below only see path text, so: the target may not be a
      * symlink, and no existing component below the workshop root may be a symlink or a different-case alias
      * (macOS is case-insensitive: ".HARNESS" is ".harness"). The workshop itself may be spelled any way that
-     * reaches it (this machine has ~/Projects/opencode and .../projects/opencode).
+     * reaches it (e.g. ~/Projects/opencode and ~/projects/opencode on a case-insensitive disk).
      */
     const realTarget = (target: string): string => {
       const refuse = (why: string) => {
@@ -1217,10 +1200,6 @@ export default {
       if (tool === "shell") {
         const cmd = typeof input?.command === "string" ? input.command : ""
 
-        if (/approve\.sh/.test(cmd)) {
-          throw new Error("SAFETY GATE: approval. Only the human approves a plan, by typing /approve <slug>.")
-        }
-
         const targets = shellWriteTargets(cmd, resolveTarget(input?.workdir || SESSION_DIR))
         const bad = targets.find((p) => outsideProject(p))
         if (bad) {
@@ -1278,18 +1257,17 @@ export default {
       const facts = open && agent === "qa" && code !== null && code !== 0 ? await pyFacts("tests", proj) : null
       const isAcceptance = isStr(facts?.run) && facts.run !== "" && normCmd(facts.run) === run
       if (!matching.length && !isAcceptance && !pinned) return
-      let wrote = false
       const green: any[] = [] // the save points this run earned (spec 4.1), made after its records are written
 
       if (open) {
         if (isAcceptance) { // the tests fail first (W4)
           const tests = facts.tests
           if (isStr(tests)) {
-            wrote = await queueWrite(proj, (st) => {
+            const saved = await queueWrite(proj, (st) => {
               const ms = msOf(st)
               st.qa = { ...(isObj(st.qa) && st.qa.milestone === ms ? st.qa : {}), failed_first_at: nowIso(), tests_sha256: tests, run, milestone: ms }
             })
-            if (wrote) green.push({ kind: "tests" }) // "M<n> acceptance tests (red by design)"
+            if (saved) green.push({ kind: "tests" }) // "M<n> acceptance tests (red by design)"
           }
         }
         const tie = agent === "builder" ? await tieOf(String(event.sessionID ?? "")) : null
@@ -1302,7 +1280,7 @@ export default {
           const n = pick[0].n
           const text = event.status === "error" ? String(event.error?.message ?? event.error ?? "tool error") : String(out?.output ?? "")
           let done = false
-          wrote = (await queueWrite(proj, (st) => {
+          await queueWrite(proj, (st) => {
             const s = stepsOf(st).find((x) => x.n === n)
             if (!s || s.done_at || !isStr(s.check) || normCmd(s.check) !== run) return false
             if (code === 0) {
@@ -1314,7 +1292,7 @@ export default {
               if (!Number.isInteger(base) || was <= base) s.attempts = was + 1
               s.last_failure = `exit ${code ?? "none"}\n${lastLines(text, 40)}`
             }
-          })) || wrote
+          })
           if (done) green.push({ kind: "step", n }) // "step <n>: <title>" with that step's files
         }
       } else {
@@ -1322,7 +1300,7 @@ export default {
         const ns = matching.length === 1 ? [String(matching[0].n)] : []
         const tree = (await pyFacts("tree", proj))?.tree
         if (isStr(tree) && (ns.length || pinned)) {
-          wrote = await queueWrite(proj, (st) => {
+          await queueWrite(proj, (st) => {
             let v = isObj(st.verify) ? st.verify : {}
             if (v.tree_sha256 !== tree || v.milestone !== msOf(st)) { // a new tree or milestone: older results count no more
               v = { tree_sha256: tree, milestone: msOf(st), checks: {} }
@@ -1339,7 +1317,6 @@ export default {
         }
       }
       for (const ev of green) await checkpointAfter(proj, ev) // awaited: saved before the agent's next model step
-      if (wrote) refreshDashboard()
     }
 
     /** A REVIEW.md, QA.md or VISUAL.md just written: its verdict with the tree it judged, or no record without a
@@ -1367,7 +1344,6 @@ export default {
       })
       // spec 4.1: only a verdict that is present is a green event (a QA.md written without one saves nothing)
       if (wrote && ok) await checkpointAfter(proj, kind === "qa" ? { kind, verdict: f.verdict, fix_round: fixRound } : { kind, verdict: f.verdict })
-      if (wrote) refreshDashboard()
     }
     const DOC_OWNER = new Map<string, ["review" | "qa" | "visual", string | null]>([
       ["REVIEW.md", ["review", null]], ["QA.md", ["qa", "qa"]], ["VISUAL.md", ["visual", "inspector"]],

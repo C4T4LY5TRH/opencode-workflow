@@ -71,32 +71,6 @@ class App:
 
 # --- the adapters (spec 7.3): adding a kind = one class + its tests + its name in harness_docs.KNOWN_KINDS -----------
 
-class Adapter:
-    def install(self, app, release):
-        """Start (or restart) the app from <home>/current; raises DeployError."""
-        raise NotImplementedError
-
-    def restart(self, app):
-        raise NotImplementedError
-
-    def stop(self, app):
-        raise NotImplementedError
-
-    def health(self, app):
-        """(ok, detail) of one health request."""
-        raise NotImplementedError
-
-    def pid(self, app):
-        return None
-
-    def lan_ip(self):
-        return None
-
-    def listeners(self, port):
-        """[(pid, process name, working directory)] listening on TCP `port`."""
-        return []
-
-
 def plist_text(app, path_env):
     """The LaunchAgent plist (pure). `start` is ONE argument of the shell (never pasted into quotes): `sh -c '<script>'
     sh <current> <start>` runs it as `cd "$1" && exec /bin/sh -c "$2"`."""
@@ -111,7 +85,7 @@ def plist_text(app, path_env):
     }).decode("utf-8")
 
 
-class ServiceAdapter(Adapter):
+class ServiceAdapter:
     """`kind: service`: a LaunchAgent in the human's GUI domain. Every command goes through `run` (injectable)."""
 
     def __init__(self, run=subprocess.run):
@@ -141,7 +115,7 @@ class ServiceAdapter(Adapter):
     def install(self, app, release):
         text = plist_text(app, os.environ.get("PATH") or "/usr/bin:/bin:/usr/sbin:/sbin")
         old = _read(app.plist_path)
-        _write(app.plist_path, text)
+        hs.write_atomic(app.plist_path, text)
         if self._loaded(app):
             if old == text:
                 return self.restart(app)
@@ -202,7 +176,6 @@ class ServiceAdapter(Adapter):
         return [tuple(e) for e in out]
 
 
-ADAPTERS = {"service": ServiceAdapter}
 
 
 # --- files -----------------------------------------------------------------------------------------------------------
@@ -215,14 +188,6 @@ def _read(path):
         return None
 
 
-def _write(path, text):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    os.replace(tmp, path)
-
-
 def load_deploys(app):
     try:
         rows = json.loads(_read(app.path("deploys.json")) or "[]")
@@ -233,7 +198,7 @@ def load_deploys(app):
 
 
 def save_deploys(app, rows):
-    _write(app.path("deploys.json"), json.dumps(rows, indent=1) + "\n")
+    hs.write_atomic(app.path("deploys.json"), json.dumps(rows, indent=1) + "\n")
 
 
 def _num(name):
@@ -350,10 +315,8 @@ def _ready(app):
         return tag, []
     blocks, notes = cp.scan_ref(app.proj, f"refs/tags/{tag}")
     if blocks:
-        b = blocks[0]
-        raise DeployError(f"the tagged tree {tag} fails the secret scan: {b['rule']} in {b['file']}"
-                          + (f":{b['line']}" if b["line"] else "") + " (fix it and ship again, or add a line to "
-                          f".harness/scan-allow: {b['file']}:{b['rule']})")
+        raise DeployError(f"the tagged tree {tag} fails the secret scan: {cp.block_text(blocks)} "
+                          "(fix it and ship again, or allow it)")
     return tag, notes
 
 
@@ -373,8 +336,7 @@ def _port_check(app, adapter):
 def _archive(app, tag, rel):
     """`git archive <tag>` into rel: exactly the tagged tree, no .git, no untracked files."""
     os.makedirs(rel)
-    a = subprocess.run([*cp.GIT_BASE, "-C", app.proj, "archive", "--format=tar", f"refs/tags/{tag}"],
-                       capture_output=True, env=cp._env(), timeout=300)
+    a = cp.git(app.proj, "archive", "--format=tar", f"refs/tags/{tag}", check=False, binary=True)
     if a.returncode:
         raise DeployError(f"git archive {tag} failed: {a.stderr.decode('utf-8', 'replace').strip()}")
     t = subprocess.run(["/usr/bin/tar", "-xf", "-", "-C", rel], input=a.stdout, capture_output=True, timeout=300)
@@ -468,7 +430,7 @@ def _refused(message):
 
 def deploy(app, adapter, now):
     """/deploy: the steps of spec 7.2. Returns {ok, message}; never writes state.json."""
-    if cp._agent_shell():
+    if hs.agent_shell():
         return _refused(AGENT_REFUSAL)
     if refused := _owner(app):  # before anything is touched
         return refused
@@ -528,7 +490,7 @@ def deploy(app, adapter, now):
 
 def rollback(app, adapter, now):
     """/deploy rollback: the previous good release becomes `current`, restarted and health-checked."""
-    if cp._agent_shell():
+    if hs.agent_shell():
         return _refused(AGENT_REFUSAL)
     if refused := _owner(app):
         return refused
@@ -548,7 +510,7 @@ def rollback(app, adapter, now):
 
 def stop(app, adapter):
     """/deploy stop: bootout and remove the LaunchAgent; every release and shared/ stay."""
-    if cp._agent_shell():
+    if hs.agent_shell():
         return _refused(AGENT_REFUSAL)
     if refused := _owner(app):  # stopping here would stop the app another checkout runs
         return refused
@@ -600,7 +562,7 @@ def parse_args(text):
 
 
 def main(argv):
-    if cp._agent_shell():  # R19: AGENT=1 or OPENCODE_SESSION_ID
+    if hs.agent_shell():  # R19
         print("REFUSED: " + AGENT_REFUSAL)
         return 2
     if len(argv) != 2:

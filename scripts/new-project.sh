@@ -12,7 +12,7 @@
 # The whole idea (every line) becomes {{GOAL}} (spec H13). The slug: an idea that starts
 # with "<slug>: " names the project (H21); else the first line's first 5 words.
 #
-# The template ships NO gate files (PLAN/REVIEW/CRITIQUE/BUGHUNT). They appear only
+# The template ships NO gate files (PLAN/REVIEW/CRITIQUE). They appear only
 # when their owning agent writes them, so the plan gate means something
 # from the first minute.
 set -euo pipefail

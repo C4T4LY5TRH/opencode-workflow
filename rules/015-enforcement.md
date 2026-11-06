@@ -3,7 +3,7 @@
 - Gates live in CODE (permission rules + safety-gate plugin), not only in prompt text.
   Prompt text alone gets bypassed by a smart model. Assume it will look for a loophole.
 - When a tool refuses, REPORT the refusal. Never work around it. Workaround = bug.
-- Each agent owns its output files. Builder writes code, never a project document (BRIEF ... BUGHUNT).
+- Each agent owns its output files. Builder writes code, never a project document (BRIEF ... VISUAL).
 - opencode server may run from a different cwd than the session. Resolve paths from
   the session/project dir, never from process.cwd().
 - A PLUGIN THAT FAILS TO COMPILE IS SILENTLY SKIPPED. Your gates just vanished and

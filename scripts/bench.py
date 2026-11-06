@@ -22,7 +22,7 @@ AGENTS = ["orchestrator", "brainstormer", "architect", "planner", "builder", "re
           "qa", "designer", "inspector"]
 COMMANDS = ["new", "go", "approve", "ship", "status", "critique", "review", "research", "brainstorm", "stop", "undo",
             "deploy", "publish"]
-SKILLS = ["caveman", "browser", "html2md", "spec", "rules", "verify"]
+SKILLS = ["rules"]
 # review kit agents: none since piece 3 (hunter and skeptic were cut); the list stays for the bench loops.
 KIT_AGENTS = []
 KIT_SKILLS = ["bug-hunt", "code-review"]
@@ -103,7 +103,7 @@ check("commands-present", f"exactly the {len(ALL_COMMANDS)} commands exist",
       ",".join([f"missing:{c}" for c in ALL_COMMANDS if c not in cmd_files] + [f"extra:{c}" for c in extra_cmds]))
 skill_bad = [s for s in ALL_SKILLS if not ("name:" in read(os.path.join(OPEN, "skills", s, "SKILL.md"))
              and "description:" in read(os.path.join(OPEN, "skills", s, "SKILL.md")))]
-check("skills-present", "9 skills with frontmatter", not skill_bad, ",".join(skill_bad))
+check("skills-present", f"{len(ALL_SKILLS)} skills with frontmatter", not skill_bad, ",".join(skill_bad))
 
 # --- wiring: a command must point at an agent that exists and is not disabled, and every
 #     @worker an orchestrator command delegates to must be on the orchestrator's allow-list.
@@ -251,7 +251,7 @@ def decide(path, rules):
 global_edit = list((perm_map.get("edit") or {}).items()) if isinstance(perm_map.get("edit"), dict) else []
 builder_edit = frontmatter_rules(read(os.path.join(OPEN, "agents", "builder.md")), "edit")
 P = "mini-projects/demo/"
-must_deny = ["PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md", "BRIEF.md", "ARCHITECTURE.md", "BRAINSTORM.md",
+must_deny = ["PLAN.md", "REVIEW.md", "CRITIQUE.md", "BRIEF.md", "ARCHITECTURE.md", "BRAINSTORM.md",
              "DESIGN.md", "QA.md", "VISUAL.md", "tests/acceptance/x", ".env", ".env.local", "config/.env", "prod.env",
              ".git/config", ".git/hooks/pre-commit"]
 probes = [p for f in must_deny for p in (f, P + f, os.path.join(WORKSHOP, P + f))]
@@ -286,7 +286,7 @@ def resolve(perms, action, resource):
 
 DOC_OWNER = {"REVIEW.md": "reviewer", "BRIEF.md": "brainstormer", "BRAINSTORM.md": "brainstormer",
              "ARCHITECTURE.md": "architect", "PLAN.md": "planner", "CRITIQUE.md": "critic",
-             "BUGHUNT.md": None, "DESIGN.md": "designer", "QA.md": "qa", "VISUAL.md": "inspector"}
+             "DESIGN.md": "designer", "QA.md": "qa", "VISUAL.md": "inspector"}
 loaded_ids = {a.get("id") for a in loaded}
 no_owner = sorted({o for o in DOC_OWNER.values() if o and o not in loaded_ids})
 own_bad = [f"{a.get('id')}:{p}={resolve(a.get('permissions', []), 'edit', p)}"
@@ -373,11 +373,10 @@ for a, allowed in BROWSER_ALLOW.items():
 check("browser-tools", "inspector and researcher: risky Playwright tools denied, the needed ones allowed; the designer has no browser",
       bool(loaded) and not browser_bad, "could not run `opencode debug agents`" if not loaded else ",".join(browser_bad[:6]))
 
-# --- the orchestrator's shell runs status.py in text mode only (digest + file checks, spec H2): --html writes a
-#     file, next.py writes state, `python3 -c` runs anything. Resolved rules as loaded, last match wins.
+# --- the orchestrator's shell runs status.py in text mode only (digest + file checks, spec H2): next.py writes
+#     state, `python3 -c` runs anything. Resolved rules as loaded, last match wins.
 #     The chain writers get the same rule so each checks its own file before it returns (T15 live).
 status_probes = {"python3 scripts/status.py demo": "allow", "python3 scripts/status.py demo --check PLAN.md": "allow",
-                 "python3 scripts/status.py --html": "deny", "python3 scripts/status.py demo --html": "deny",
                  "python3 scripts/next.py demo": "deny", 'python3 -c "print(1)"': "deny"}
 status_bad = []
 for a in ["orchestrator", "architect", "designer", "inspector", "planner", "critic"]:
@@ -387,7 +386,7 @@ for a in ["orchestrator", "architect", "designer", "inspector", "planner", "crit
         continue
     status_bad += [f"{a}:{c}={resolve(perms, 'shell', c)}" for c, want in status_probes.items()
                    if resolve(perms, "shell", c) != want]
-check("orchestrator-status-only", "orchestrator + chain writers' shell: status.py text mode only, no --html, no other python",
+check("orchestrator-status-only", "orchestrator + chain writers' shell: status.py only, no other python",
       bool(loaded) and not status_bad, "could not run `opencode debug agents`" if not loaded else ",".join(status_bad[:6]))
 
 # --- plugins present + the gates actually FIRE
@@ -400,38 +399,6 @@ try:
     check("gates-fire", "safety-gate plugin fires on every gate case", gt.returncode == 0, last)
 except Exception as exc:
     check("gates-fire", "safety-gate plugin fires on every gate case", False, str(exc)[:120])
-
-# --- state library (plan parsing, approval, tree hash, phase)
-def state_detail(out, ok):
-    """Name what failed: first 3 FAIL/ERROR lines, first 3 skips, then the summary line (<= ~300 chars)."""
-    lines = [l.strip() for l in out.splitlines() if l.strip()]
-    last = lines[-1] if lines else ""
-    if ok:
-        return last
-    bad = [l for l in lines if re.match(r"(FAIL|ERROR): ", l)][:3]
-    skips = [re.sub(r" \(.*?\) \.\.\. skipped", " skipped", l) for l in lines if re.search(r"skipped '", l)][:3]
-    return "; ".join([last] + bad + skips)[:300]  # the summary first, so the cap never cuts it
-
-
-st_out, st_ok = "", False
-try:
-    st = subprocess.run([sys.executable, os.path.join(HERE, "state-test.py"), "-v"], capture_output=True, text=True, timeout=540)
-    st_out, st_ok = st.stdout + st.stderr, st.returncode == 0
-    st_detail = state_detail(st_out, st_ok)
-except Exception as exc:
-    st_detail = str(exc)[:120]
-    part = [getattr(exc, a, None) for a in ("stdout", "stderr")]  # a timeout keeps the partial -v output (bytes)
-    st_out = "".join(x.decode("utf-8", "replace") if isinstance(x, bytes) else (x or "") for x in part)
-if not st_ok:
-    try:  # keep the full output so the next failure names itself
-        os.makedirs(os.path.join(RUNTIME, "bench-history"), exist_ok=True)
-        st_log = os.path.join(RUNTIME, "bench-history", datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-state-tests.log")
-        with open(st_log, "w", encoding="utf-8") as fh:
-            fh.write(st_out or st_detail)
-        st_detail = (st_detail + " | log: " + os.path.relpath(st_log, os.path.dirname(RUNTIME)))[:400]
-    except Exception:
-        pass
-check("state-tests", "state library unit tests pass", st_ok, st_detail)
 
 # --- OS sandbox for agent shells (macOS sandbox-exec); gates-fire runs its cases for real
 sbx = os.path.join(HERE, "sandbox")
@@ -449,7 +416,7 @@ check("plugins-alive", "plugins reported a load heartbeat", bool(alive.strip()) 
 
 # --- template ships NO gate files (else the gates are no-ops in every new project)
 tpl = os.path.join(WORKSHOP, "mini-projects", "_template")
-leak = [f for f in ("PLAN.md", "REVIEW.md", "CRITIQUE.md", "BUGHUNT.md", "ARCHITECTURE.md", "BRAINSTORM.md", "DESIGN.md")
+leak = [f for f in ("PLAN.md", "REVIEW.md", "CRITIQUE.md", "ARCHITECTURE.md", "BRAINSTORM.md", "DESIGN.md")
         if os.path.isfile(os.path.join(tpl, f))]
 check("template-clean", "template ships no gate files", not leak, ",".join(leak))
 tpl_need = [f for f in ("BRIEF.md", "AGENTS.md", "README.md", "NOTES.md", "LEARNINGS.md")

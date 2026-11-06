@@ -4,7 +4,7 @@ agent: orchestrator
 ---
 Arguments: "$ARGUMENTS" (`[slug]`, or `[slug] yes`; no slug means the current project). The script already ran when the human typed this command; its output (if it printed no status line, there is no such project: relay what it printed and stop):
 
-!`R="$(python3 scripts/harness_state.py shiptarget "$ARGUMENTS")" && S="${R% *}" && M="${R##* }" && { python3 scripts/status.py "$S"; python3 scripts/harness_state.py ship "mini-projects/$S" "$M"; [ "$M" = yes ] || { echo "git status --short:"; git -c core.fsmonitor=false -c safe.bareRepository=explicit -C "mini-projects/$S" status --short 2>&1; }; }; python3 scripts/status.py --html >/dev/null 2>&1; true`
+!`R="$(python3 scripts/harness_state.py shiptarget "$ARGUMENTS")" && S="${R% *}" && M="${R##* }" && { python3 scripts/status.py "$S"; python3 scripts/harness_state.py ship "mini-projects/$S" "$M"; [ "$M" = yes ] || { echo "git status --short:"; git -c core.fsmonitor=false -c safe.bareRepository=explicit -C "mini-projects/$S" status --short 2>&1; }; }; true`
 
 Run no shell and write nothing. Everything you need is printed above.
 
